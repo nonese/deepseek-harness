@@ -40,7 +40,7 @@ type SandboxEnforcement = 'full' | 'partial'
 
 ## Per-call policy
 
-The complete execution policy is resolved and carried per capability call. It includes `danger-full-access` so a consumer can resolve policy once before deciding whether to bypass confinement. Normal tool calls derive `workspaceRoot` from the calling session's immutable cwd; deployment configuration is the agentless fallback. The root is canonicalized with filesystem semantics before lexical normalization, so a cwd containing `symlink/..` identifies the directory where a spawned process actually runs.
+The complete execution policy is resolved and carried per capability call. It includes `danger-full-access` so a consumer can resolve policy once before deciding whether to bypass confinement. Normal tool calls derive `workspaceRoot` from the calling session's immutable cwd; deployment configuration is the agentless fallback. The root is canonicalized with filesystem semantics before lexical normalization, so a cwd containing `symlink/..` identifies the directory where a spawned process actually runs. A service deployment may additionally hide `privateRoot` and expose only the caller's `readableRoot`; model-facing file tools and supporting process profiles enforce the same read slice.
 
 ```ts type-equiv
 /**
@@ -53,6 +53,17 @@ interface SandboxExecutionPolicy {
   mode: SandboxMode
   /** Absolute root directory `workspace-write` may write under. */
   workspaceRoot: string
+  /**
+   * Optional deployment-private tree that confined child processes must hide.
+   * When present, the provider exposes only {@link readableRoot} from inside
+   * this tree. This is a read-isolation boundary, not another writable grant.
+   */
+  privateRoot?: string
+  /**
+   * The authenticated caller's readable slice of {@link privateRoot}. Model
+   * filesystem tools enforce the same slice before reading or searching.
+   */
+  readableRoot?: string
   /**
    * Opaque identity of the calling session (the branded `dsh-session`
    * SessionId). Backends key per-session state off it (e.g. windows-acl gives
@@ -184,7 +195,7 @@ Abstract process-sandbox service. confine must return enforcing argv or fail clo
 abstract confine(argv: readonly string[], policy: SandboxPolicy): ConfinedArgv
 ```
 
-Source: [`packages/sandbox/sandbox/src/index.ts:158`](../../packages/sandbox/sandbox/src/index.ts)
+Source: [`packages/sandbox/sandbox/src/index.ts:169`](../../packages/sandbox/sandbox/src/index.ts)
 
 <a id="ctxsandboxpolicy--sandboxpolicyservice"></a>
 
@@ -205,6 +216,13 @@ The sandbox-policy service (`ctx.sandboxPolicy`). Owns the deployment default mo
 resolve(request: SandboxPolicyRequest = {}): SandboxExecutionPolicy
 
 /**
+ * Return whether `mode` is at or below the deployment ceiling.
+ * @param mode - candidate mode to compare with the configured maximum.
+ * @returns whether the deployment permits the mode.
+ */
+allowsMode(mode: SandboxMode): boolean
+
+/**
  * Read the session override without applying the deployment default.
  * @param session - session whose log supplies the override.
  * @returns the last logged mode, or `undefined` without one.
@@ -214,5 +232,5 @@ overrideOf(session: Session): SandboxMode | undefined
 
 Types: [Session](session.md)
 
-Source: [`packages/sandbox/sandbox-policy/src/index.ts:91`](../../packages/sandbox/sandbox-policy/src/index.ts)
+Source: [`packages/sandbox/sandbox-policy/src/index.ts:146`](../../packages/sandbox/sandbox-policy/src/index.ts)
 <!-- END GENERATED cordis-surface -->

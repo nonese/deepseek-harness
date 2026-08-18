@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { access, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import LlmRuntime, { INVALID_CREDENTIAL_CODE } from '@deepseek-ai/dsh-llm'
@@ -8,6 +8,8 @@ import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { LocalCredentialProvider } from '@deepseek-ai/dsh-credentials-local'
 import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import { FileSettingsProvider } from '@deepseek-ai/dsh-settings-file'
+import { FileAuthService } from '@deepseek-ai/dsh-auth-file'
+import { SessionId } from '@deepseek-ai/dsh-session'
 import * as LlmDeepSeek from '@deepseek-ai/dsh-llm-deepseek'
 import { assemble } from './assemble.ts'
 import { closeMockServers, mockServer, textEvents } from './mock-server.ts'
@@ -92,6 +94,59 @@ describe('request-level dynamic configuration', () => {
     await prompt(ctx)
     expect(server.headers[0]?.authorization).toBe('Bearer sk-arrived')
     await expect(access(join(dir, '.anonymous-user-id'))).resolves.toBeUndefined()
+  })
+
+  it('uses the managed key only for opted-in users requesting DeepSeek V4 Flash', async () => {
+    vi.stubEnv('DEEPSEEK_API_KEY', '')
+    vi.stubEnv('HARNESS_TEST_ADMIN_PASSWORD', 'correct horse battery staple')
+    const dir = await home()
+    const server = await mockServer([
+      { kind: 'sse', events: textEvents },
+      { kind: 'sse', events: textEvents },
+      { kind: 'sse', events: textEvents },
+    ])
+    const ctx = new Context()
+    cleanups.push(async () => { await ctx.fiber.dispose() })
+    await ctx.plugin(LlmRuntime)
+    await ctx.plugin(FileSettingsProvider, { path: join(dir, 'settings.yaml'), watch: false })
+    await ctx.plugin(LocalCredentialProvider, { path: join(dir, '.credentials.yaml'), watch: false })
+    await ctx.plugin(FileAuthService, {
+      root: join(dir, 'server'),
+      bootstrapPasswordEnv: 'HARNESS_TEST_ADMIN_PASSWORD',
+    })
+
+    const optedIn = ctx.auth.listUsers()[0]
+    if (optedIn === undefined) throw new Error('bootstrap user missing')
+    const optedOut = await ctx.auth.createLocalUser({
+      username: 'other.user', password: 'a sufficiently long password', role: 'user',
+    })
+    await ctx.auth.setSharedDeepSeekPreference(optedIn.id, true)
+    const optedInProject = join(ctx.auth.userPaths(optedIn.id).projects, 'project-a')
+    const optedOutProject = join(ctx.auth.userPaths(optedOut.id).projects, 'project-b')
+    await Promise.all([mkdir(optedInProject), mkdir(optedOutProject)])
+    const sessionPaths = new Map([
+      [SessionId('opted-in'), optedInProject],
+      [SessionId('opted-out'), optedOutProject],
+    ])
+    ctx.provide('sessions', {
+      get(sessionId: SessionId) {
+        const cwd = sessionPaths.get(sessionId)
+        return cwd === undefined ? undefined : { header: { cwd } }
+      },
+    } as never)
+    await ctx.plugin(LlmDeepSeek, { baseURL: server.url })
+
+    await ctx.credentials.set(KEY_REF, 'personal-key')
+    await ctx.credentials.set(credentialRef(LlmDeepSeek.SHARED_DEEPSEEK_API_KEY_ENV), 'managed-key')
+    await assemble(ctx, { model: 'deepseek-v4-flash', messages: [], sessionId: SessionId('opted-in') })
+    await assemble(ctx, { model: 'deepseek-v4-pro', messages: [], sessionId: SessionId('opted-in') })
+    await assemble(ctx, { model: 'deepseek-v4-flash', messages: [], sessionId: SessionId('opted-out') })
+
+    expect(server.headers.map(headers => headers.authorization)).toEqual([
+      'Bearer managed-key',
+      'Bearer personal-key',
+      'Bearer personal-key',
+    ])
   })
 
   it('rejects a stored credential no header can carry, never echoing it in the failure', async () => {

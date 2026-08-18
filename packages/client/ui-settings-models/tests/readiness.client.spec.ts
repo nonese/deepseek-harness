@@ -64,6 +64,17 @@ describe('providerUsable', () => {
   it('treats a reference-free registered route as provider-native authentication', () => {
     expect(providerUsable(otherRow({ apiKeyEnv: undefined, credential: undefined }))).toBe(true)
   })
+
+  it('treats an authenticated caller\'s managed model as usable without a personal key', () => {
+    const managed = row({
+      entry: { ...row().entry, managedModels: ['deepseek-v4-flash'] },
+    })
+    expect(providerUsable(managed)).toBe(true)
+    expect(providerUsable({
+      ...managed,
+      entry: { ...managed.entry, active: false },
+    })).toBe(false)
+  })
 })
 
 describe('onboardingReadiness', () => {
@@ -91,6 +102,14 @@ describe('onboardingReadiness', () => {
     expect(onboardingReadiness(state({
       rows: [row(), otherRow({ credential: missingCredential })],
     }))).toEqual({ kind: 'credential-missing' })
+  })
+
+  it('ends onboarding when the opted-in user can use the managed Flash model', () => {
+    expect(onboardingReadiness(state({
+      rows: [row({
+        entry: { ...row().entry, managedModels: ['deepseek-v4-flash'] },
+      })],
+    }))).toEqual({ kind: 'provider-ready' })
   })
 
   it('accepts file and process-environment credentials without prompting', () => {

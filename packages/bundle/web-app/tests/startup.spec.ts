@@ -11,6 +11,7 @@ import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
 import { internals, provideCmdline } from '@deepseek-ai/dsh-cmdline'
+import type AuthService from '@deepseek-ai/dsh-auth'
 import { afterEach, describe, expect, it } from 'vitest'
 import { apply, WEB_STARTUP_SERVICE, type WebStartupValues } from '../src/startup.ts'
 
@@ -47,7 +48,7 @@ export function apply(_ctx, config) { globalThis.__webStartupObserved.readerConf
   // to the source-plane plugin already imported by this test.
   writeFileSync(join(dir, 'provider.mjs'), `
 export const name = 'web-startup'
-export const inject = ['cmdlineArgs']
+export const inject = ['cmdlineArgs', 'auth']
 export const apply = ctx => globalThis.__webStartupApply(ctx)
 `)
   writeFileSync(join(dir, 'cordis.yml'), [
@@ -73,6 +74,7 @@ export const apply = ctx => globalThis.__webStartupApply(ctx)
   globals.__webStartupObserved = observed
 
   const ctx = new Context()
+  ctx.provide('auth', {} as AuthService)
   await ctx.plugin(Loader)
   ctx.loader.builtins.include = Include
   provideCmdline(ctx, { args, exit: code => void observed.exits.push(code) })
@@ -129,11 +131,10 @@ describe('web command-line provider', () => {
     expect(observed.exits).toEqual([1])
   })
 
-  it('rejects the intentionally unsupported all-interfaces host before the consumer activates', async () => {
+  it('publishes an authenticated all-interfaces bind for LAN serving', async () => {
     const { values, observed } = await bootProvider(['--host', '0.0.0.0'])
-    expect(observed.out).toContain('--host 0.0.0.0 is intentionally not supported yet for safety: it would expose remote code execution to the network; use 127.0.0.1 instead')
-    expect(values).toBeUndefined()
-    expect(observed.readerConfig).toBeUndefined()
-    expect(observed.exits).toEqual([1])
+    expect(values).toEqual({ host: '0.0.0.0', trustedHosts: [] })
+    expect(observed.readerConfig).toEqual({ host: '0.0.0.0', port: 3080, trustedHosts: [] })
+    expect(observed.exits).toEqual([])
   })
 })

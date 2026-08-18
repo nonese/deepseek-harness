@@ -769,6 +769,27 @@ describe('envelope observation', () => {
 })
 
 describe('resolveBase', () => {
+  it('mints RPC ids without the secure-context-only randomUUID API', () => {
+    class Probe extends AbstractApiClient {
+      protected async doFetch(): Promise<Response> {
+        throw new Error('not used')
+      }
+
+      mint(): string {
+        return this.mintRpcId()
+      }
+    }
+    const randomUuid = vi.spyOn(globalThis.crypto, 'randomUUID').mockImplementation(() => {
+      throw new Error('randomUUID is unavailable on a plain-HTTP LAN origin')
+    })
+    try {
+      expect(new Probe().mint()).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+      expect(randomUuid).not.toHaveBeenCalled()
+    } finally {
+      randomUuid.mockRestore()
+    }
+  })
+
   it('prefers a real location.origin and falls back to the internal authority', async () => {
     class Probe extends AbstractApiClient {
       urls: string[] = []

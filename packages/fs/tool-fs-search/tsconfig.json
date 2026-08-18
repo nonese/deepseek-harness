@@ -19,6 +19,9 @@
       "path": "../../util/output-retention"
     },
     {
+      "path": "../fs"
+    },
+    {
       "path": "../../llm/llm"
     },
     {
@@ -29,6 +32,9 @@
     },
     {
       "path": "../../core/system-prompt"
+    },
+    {
+      "path": "../../sandbox/sandbox-policy"
     },
     {
       "path": "../../shell/shell"

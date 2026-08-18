@@ -3,9 +3,10 @@ import { EventEmitter, once } from 'node:events'
 import { createServer, request as httpRequest } from 'node:http'
 import { PassThrough, Readable } from 'node:stream'
 import { Context } from '@deepseek-ai/cordis'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { AddressInfo } from 'node:net'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import type { AuthPrincipal, UserId } from '@deepseek-ai/dsh-auth'
 import type { ApiProxy } from '@deepseek-ai/dsh-host-apiproxy/api'
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import { RpcId, type ClientRequest } from '@deepseek-ai/dsh-host-apiproxy/api'
@@ -87,6 +88,43 @@ async function mounted(config?: { trustedHosts?: string[] }): Promise<{
   const fiber = ctx.plugin({ inject: [...inject], apply }, config)
   await fiber.await()
   return { routes, upgrades, dispose: () => fiber.dispose() }
+}
+
+async function mountedAuthenticated(role: 'admin' | 'user'): Promise<{
+  connection: HostConnectionHandle
+  routes: WebRoute[]
+  dispose: () => Promise<void>
+}> {
+  const ctx = new Context()
+  const routes: WebRoute[] = []
+  const principal: AuthPrincipal = {
+    user: {
+      id: 'user-1' as UserId,
+      username: 'alice',
+      displayName: 'Alice',
+      role,
+      status: 'active',
+      authMethods: ['local'],
+      createdAt: '2026-01-01T00:00:00.000Z',
+    },
+    sessionId: 'browser-session',
+    method: 'local',
+    expiresAt: '2026-01-02T00:00:00.000Z',
+  }
+  ctx.provide('webServer', fakeHttpServer(routes, []) as WebServer)
+  ctx.provide('apiProxy', {
+    forPrincipal: () => ({} as ApiProxy),
+  } as unknown as ApiProxy)
+  ctx.provide('auth', {
+    authenticateToken: async (token: string) => token === 'valid' ? principal : undefined,
+  } as never)
+  const fiber = ctx.plugin({ inject: [...inject], apply })
+  await fiber.await()
+  return {
+    connection: ctx.get('connection') as HostConnectionHandle,
+    routes,
+    dispose: () => fiber.dispose(),
+  }
 }
 
 describe('connection node half', () => {
@@ -335,6 +373,44 @@ describe('connection node half', () => {
     expect(loopbackOnly.state.status).toBe(403)
     await removeLoopback()
     await fiber.dispose()
+  })
+
+  it('allows only authenticated administrators to reach the dynamic Cordis runner', async () => {
+    for (const role of ['user', 'admin'] as const) {
+      const { connection, routes, dispose } = await mountedAuthenticated(role)
+      const handler = vi.fn(async () => ({ ok: true as const, value: { plugins: [] } }))
+      const remove = connection.rpc.intercept(
+        '/api',
+        endpoint => endpoint.startsWith('dynamicCordisRunner/'),
+        handler,
+        { authority: 'trusted-host' },
+      )
+      const message: ClientRequest = {
+        type: 'client-request',
+        rpcId: RpcId(`dynamic-cordis-${role}`),
+        method: 'dynamicCordisRunner/inventory',
+        payload: { args: {} },
+      }
+      const result = fakeResponse()
+      await routes[0]!.handler(fakePost({
+        host: '127.0.0.1:3080',
+        cookie: 'harness_session=valid',
+      }, '/api/dynamicCordisRunner/inventory', message), result.response)
+
+      if (role === 'user') {
+        expect(result.state).toMatchObject({ status: 403, body: 'administrator required' })
+        expect(handler).not.toHaveBeenCalled()
+      } else {
+        expect(result.state.status).toBe(200)
+        expect(JSON.parse(String(result.state.body))).toMatchObject({
+          rpcId: 'dynamic-cordis-admin',
+          result: { ok: true, value: { plugins: [] } },
+        })
+        expect(handler).toHaveBeenCalledTimes(1)
+      }
+      await remove()
+      await dispose()
+    }
   })
 
   it('applies the configured trust fence and JSON envelope checks to generic channels', async () => {

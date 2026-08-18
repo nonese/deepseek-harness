@@ -6,7 +6,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -16,6 +16,8 @@ import ToolRuntime, { TOOL_ABORTED_BEFORE_DISPATCH } from '@deepseek-ai/dsh-tool
 import { LocalFileSystem } from '@deepseek-ai/dsh-fs-local'
 import * as FsPolicy from '@deepseek-ai/dsh-fs-observation-policy'
 import * as ToolFs from '@deepseek-ai/dsh-tool-fs'
+import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
+import { Session, SessionId } from '@deepseek-ai/dsh-session'
 
 const testToolSignal = new AbortController().signal
 
@@ -304,6 +306,60 @@ describe('default deployment (with dsh-fs-observation-policy)', () => {
       expect(statSpy).not.toHaveBeenCalled()
       statSpy.mockRestore()
     })
+  })
+})
+
+describe('authenticated user read boundary', () => {
+  let project: string
+  let foreignProject: string
+  let active: Session
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'dsh-tool-fs-auth-'))
+    const users = join(dir, 'server', 'users')
+    project = join(users, 'user-a', 'projects', 'project-a')
+    foreignProject = join(users, 'user-b', 'projects', 'project-b')
+    await Promise.all([mkdir(project, { recursive: true }), mkdir(foreignProject, { recursive: true })])
+    await writeFile(join(project, 'own.txt'), 'own')
+    await writeFile(join(foreignProject, 'secret.txt'), 'secret')
+    await symlink(join(foreignProject, 'secret.txt'), join(project, 'foreign-link.txt'))
+
+    ctx = new Context()
+    await ctx.plugin(SystemPrompt)
+    await ctx.plugin(ToolRuntime)
+    await ctx.plugin(LocalFileSystem, { cwd: project })
+    await ctx.plugin(SandboxPolicyService, {
+      mode: 'workspace-write',
+      maximumMode: 'workspace-write',
+      workspaceRoot: users,
+      privateRoot: dir,
+      accessRootParent: users,
+    })
+    fiber = await ctx.plugin(ToolFs)
+    const id = SessionId('authenticated-read-boundary')
+    active = Session.create(id, undefined, { version: 0, id, createdAt: 0, cwd: project })
+  })
+
+  function authenticatedRead(filePath: string) {
+    return ctx.tools.execute({
+      signal: testToolSignal,
+      callId: CallId(`auth-read-${++callCounter}`),
+      name: 'read',
+      arguments: { file_path: filePath },
+      agent: { session: active } as never,
+    })
+  }
+
+  it('allows the caller tree but denies another user and a symlink into it', async () => {
+    expect((await authenticatedRead('own.txt')).isError).toBe(false)
+
+    const direct = await authenticatedRead(join(foreignProject, 'secret.txt'))
+    expect(direct.isError).toBe(true)
+    expect(direct.error).toMatchObject({ info: { code: 'FS_SANDBOX_DENIED' } })
+
+    const linked = await authenticatedRead('foreign-link.txt')
+    expect(linked.isError).toBe(true)
+    expect(linked.error).toMatchObject({ info: { code: 'FS_SANDBOX_DENIED' } })
   })
 })
 

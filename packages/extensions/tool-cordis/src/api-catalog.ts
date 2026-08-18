@@ -379,6 +379,110 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'auth',
+    summary: 'Authentication Service Definition.',
+    description: 'Authentication Service Definition. Implementations must compare passwords without early exits, persist only session-token digests, and revoke every session when a user is disabled.',
+    methods: [
+      {
+        signature: 'abstract authenticateToken(token: string): Promise<AuthPrincipal | undefined>',
+        description: 'Resolve an opaque cookie token into an active principal.',
+        parameters: [{ name: 'token', description: 'raw opaque browser token from the cookie.' }],
+        returns: 'the active principal, or `undefined` for an invalid or expired token.',
+      },
+      {
+        signature: 'abstract loginLocal(username: string, password: string): Promise<IssuedAuthSession>',
+        description: 'Verify local credentials and issue a revocable browser session.',
+        parameters: [{ name: 'username', description: 'submitted local username.' }, { name: 'password', description: 'submitted cleartext password, retained only for verification.' }],
+        returns: 'the one-time raw token and its public principal.',
+      },
+      {
+        signature: 'abstract loginOidc(input: OidcLoginInput): Promise<IssuedAuthSession>',
+        description: 'Resolve a verified OIDC identity and issue a revocable browser session. Implementations bind identities by immutable issuer and subject values; display claims must never select an existing local account.',
+        parameters: [{ name: 'input', description: 'claims already validated by the OIDC relying party.' }],
+        returns: 'the one-time raw token and its public principal.',
+      },
+      {
+        signature: 'abstract oidcClientConfig(): OidcClientConfig | undefined',
+        description: 'Read the persisted non-secret OIDC client settings.',
+        parameters: [],
+        returns: 'a detached configuration, or `undefined` before first setup.',
+      },
+      {
+        signature: 'abstract setOidcClientConfig(config: OidcClientConfig): Promise<void>',
+        description: 'Persist non-secret OIDC client settings.',
+        parameters: [{ name: 'config', description: 'validated relying-party settings.' }],
+      },
+      {
+        signature: 'abstract logout(token: string): Promise<void>',
+        description: 'Revoke one opaque cookie token. Missing and expired tokens are no-ops.',
+        parameters: [{ name: 'token', description: 'raw opaque browser token to revoke.' }],
+      },
+      {
+        signature: 'abstract revokeUserSessions(userId: UserId): Promise<void>',
+        description: 'Revoke every active browser session for one user.',
+        parameters: [{ name: 'userId', description: 'stable user identity whose tokens are revoked.' }],
+      },
+      {
+        signature: 'abstract listUsers(): readonly AuthUser[]',
+        description: 'List public users in stable creation order.',
+        parameters: [],
+        returns: 'detached public records without credential material.',
+      },
+      {
+        signature: 'abstract getUser(userId: UserId): AuthUser | undefined',
+        description: 'Read one public user record.',
+        parameters: [{ name: 'userId', description: 'stable user identity to resolve.' }],
+        returns: 'the public record, or `undefined` when absent.',
+      },
+      {
+        signature: 'abstract createLocalUser(input: CreateLocalUserInput): Promise<AuthUser>',
+        description: 'Create a local account and its owner-only data tree.',
+        parameters: [{ name: 'input', description: 'validated account identity, password, and role fields.' }],
+        returns: 'the created public user record.',
+      },
+      {
+        signature: 'abstract updateUser(userId: UserId, input: UpdateUserInput): Promise<AuthUser>',
+        description: 'Change administrative user fields.',
+        parameters: [{ name: 'userId', description: 'stable user identity to update.' }, { name: 'input', description: 'display name, role, or lifecycle changes.' }],
+        returns: 'the updated public user record.',
+      },
+      {
+        signature: 'abstract resetLocalPassword(userId: UserId, password: string): Promise<void>',
+        description: 'Replace a local account password and revoke its browser sessions.',
+        parameters: [{ name: 'userId', description: 'stable user identity whose local password changes.' }, { name: 'password', description: 'new cleartext password, retained only until hashing completes.' }],
+      },
+      {
+        signature: 'abstract sharedDeepSeekPreference(userId: UserId): SharedDeepSeekPreference',
+        description: 'Read whether one user opted into the administrator-managed DeepSeek credential.',
+        parameters: [{ name: 'userId', description: 'stable user identity whose preference is requested.' }],
+        returns: 'the detached preference; absent stored state resolves to disabled.',
+      },
+      {
+        signature: 'abstract setSharedDeepSeekPreference(userId: UserId, enabled: boolean): Promise<void>',
+        description: 'Persist one user\'s choice to consume the administrator-managed DeepSeek credential.',
+        parameters: [{ name: 'userId', description: 'stable user identity whose preference changes.' }, { name: 'enabled', description: 'whether matching DeepSeek V4 Flash requests may use the managed credential.' }],
+      },
+      {
+        signature: 'abstract ownerForProjectPath(path: string): AuthUser | undefined',
+        description: 'Resolve which user owns a path inside a program-managed project tree.',
+        parameters: [{ name: 'path', description: 'absolute project or descendant path to classify.' }],
+        returns: 'the public owner record, or `undefined` outside every managed project tree.',
+      },
+      {
+        signature: 'abstract ensureUserPaths(userId: UserId): Promise<UserPaths>',
+        description: 'Resolve and materialize program-managed directories for one user.',
+        parameters: [{ name: 'userId', description: 'stable user identity selecting the directory tree.' }],
+        returns: 'canonical program-managed path roles.',
+      },
+      {
+        signature: 'abstract userPaths(userId: UserId): UserPaths',
+        description: 'Resolve paths without touching disk.',
+        parameters: [{ name: 'userId', description: 'stable user identity selecting the directory tree.' }],
+        returns: 'program-managed path roles without creating them.',
+      },
+    ],
+  },
+  {
     key: 'clientModules',
     summary: 'The web plugin table service: incremental `dsh.client` scan + wire composition + bundle route + index tap.',
     description: 'The web plugin table service: incremental `dsh.client` scan + wire composition + bundle route + index tap. Construction runs the activation scan synchronously — a malformed declaration or missing bundle among the already-loaded entries aggregates into one loud throw (FAILED fiber; the boot activation audit reports it).',
@@ -987,8 +1091,28 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [],
       },
       {
+        signature: 'readonly maximumMode: SandboxMode',
+        description: 'Widest mode this deployment permits, including approved retries.',
+        parameters: [],
+      },
+      {
+        signature: 'readonly escalationModes: readonly SandboxMode[]',
+        description: 'Schema-safe escalation targets that do not exceed maximumMode.',
+        parameters: [],
+      },
+      {
         signature: 'readonly workspaceRoot: string',
         description: 'The absolute `workspace-write` fallback root for calls without a session cwd.',
+        parameters: [],
+      },
+      {
+        signature: 'readonly privateRoot: string | undefined',
+        description: 'Canonical host-private tree, when read isolation is enabled.',
+        parameters: [],
+      },
+      {
+        signature: 'readonly accessRootParent: string | undefined',
+        description: 'Canonical parent of per-user roots, when read isolation is enabled.',
         parameters: [],
       },
       {
@@ -996,6 +1120,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Resolve the complete policy for one capability call. An approved explicit mode outranks the session\'s last `sandbox/mode` event, which outranks the deployment default. A session cwd is its workspace-write boundary; the configured root is the fallback for agentless calls and sessions without a cwd.',
         parameters: [{ name: 'request', description: 'optional session and approved mode override.' }],
         returns: 'the fully resolved per-call mode and absolute workspace root.',
+      },
+      {
+        signature: 'allowsMode(mode: SandboxMode): boolean',
+        description: 'Return whether `mode` is at or below the deployment ceiling.',
+        parameters: [{ name: 'mode', description: 'candidate mode to compare with the configured maximum.' }],
+        returns: 'whether the deployment permits the mode.',
       },
       {
         signature: 'overrideOf(session: Session): SandboxMode | undefined',
@@ -2714,6 +2844,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type AttachmentId = Branded<\'AttachmentId\'>;',
   },
   {
+    name: 'AuthMethod',
+    declaration: 'export type AuthMethod = \'local\' | \'oidc\';',
+  },
+  {
+    name: 'AuthPrincipal',
+    declaration: 'export interface AuthPrincipal {\n    user: AuthUser;\n    sessionId: string;\n    method: AuthMethod;\n    expiresAt: string;\n}',
+  },
+  {
+    name: 'AuthUser',
+    declaration: 'export interface AuthUser {\n    id: UserId;\n    username: string;\n    displayName: string;\n    role: UserRole;\n    status: UserStatus;\n    authMethods: readonly AuthMethod[];\n    createdAt: string;\n    lastLoginAt?: string;\n}',
+  },
+  {
     name: 'BackendRegistry',
     declaration: 'export class BackendRegistry {\n    register(name: string, backend: StorageBackend): () => void;\n    get(name: string): StorageBackend;\n    names(): string[];\n}',
   },
@@ -2908,6 +3050,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'CreateGoalResult',
     declaration: 'export interface CreateGoalResult {\n    readonly ref: GoalRef;\n}',
+  },
+  {
+    name: 'CreateLocalUserInput',
+    declaration: 'export interface CreateLocalUserInput {\n    username: string;\n    displayName?: string;\n    password: string;\n    role?: UserRole;\n}',
   },
   {
     name: 'CreateSessionOptions',
@@ -3180,6 +3326,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'InvokeRemoteRequest',
     declaration: 'export interface InvokeRemoteRequest {\n    readonly namespace: string;\n    readonly method: string;\n    readonly args: Readonly<Record<string, unknown>>;\n    readonly signal?: AbortSignal;\n}',
+  },
+  {
+    name: 'IssuedAuthSession',
+    declaration: 'export interface IssuedAuthSession {\n    token: string;\n    principal: AuthPrincipal;\n}',
   },
   {
     name: 'JobDoneListener',
@@ -3470,6 +3620,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type ObjectJsonSchema = JsonSchemaNode & {\n    type: \'object\';\n};',
   },
   {
+    name: 'OidcClientAuthMethod',
+    declaration: 'export type OidcClientAuthMethod = \'client_secret_basic\' | \'client_secret_post\' | \'none\';',
+  },
+  {
+    name: 'OidcClientConfig',
+    declaration: 'export interface OidcClientConfig {\n    enabled: boolean;\n    issuer: string;\n    clientId: string;\n    redirectUri: string;\n    scopes: readonly string[];\n    clientAuthMethod: OidcClientAuthMethod;\n    allowInsecureIssuer: boolean;\n    administratorGroup: string;\n}',
+  },
+  {
+    name: 'OidcLoginInput',
+    declaration: 'export interface OidcLoginInput {\n    issuer: string;\n    subject: string;\n    preferredUsername?: string;\n    displayName?: string;\n    administrator: boolean;\n}',
+  },
+  {
     name: 'OneShotSubagentDescriptorData',
     declaration: 'export interface OneShotSubagentDescriptorData extends SubagentDescriptorBase {\n    readonly mode: \'one-shot\';\n    readonly label?: string;\n}',
   },
@@ -3659,7 +3821,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SandboxExecutionPolicy',
-    declaration: 'export interface SandboxExecutionPolicy {\n    mode: SandboxMode;\n    workspaceRoot: string;\n    sessionId?: SessionId;\n}',
+    declaration: 'export interface SandboxExecutionPolicy {\n    mode: SandboxMode;\n    workspaceRoot: string;\n    privateRoot?: string;\n    readableRoot?: string;\n    sessionId?: SessionId;\n}',
   },
   {
     name: 'SandboxMode',
@@ -3980,6 +4142,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SettingsUpdateSource',
     declaration: 'export type SettingsUpdateSource = \'update\' | \'provider\';',
+  },
+  {
+    name: 'SharedDeepSeekPreference',
+    declaration: 'export interface SharedDeepSeekPreference {\n    enabled: boolean;\n}',
   },
   {
     name: 'ShellExecRequest',
@@ -4522,12 +4688,32 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface TypertTypeModel {\n    readonly name: string;\n    readonly declaration: string;\n}',
   },
   {
+    name: 'UpdateUserInput',
+    declaration: 'export interface UpdateUserInput {\n    displayName?: string;\n    role?: UserRole;\n    status?: UserStatus;\n}',
+  },
+  {
+    name: 'UserId',
+    declaration: 'export type UserId = Branded<\'UserId\'>;',
+  },
+  {
     name: 'UserMessage',
     declaration: 'export interface UserMessage extends Message {\n    readonly role: \'user\';\n}',
   },
   {
+    name: 'UserPaths',
+    declaration: 'export interface UserPaths {\n    root: string;\n    projects: string;\n    state: string;\n    settings: string;\n    credentials: string;\n    sessions: string;\n    attachments: string;\n}',
+  },
+  {
     name: 'UserQuestionProvider',
     declaration: 'export interface UserQuestionProvider {\n    ask(request: AskUserQuestionRequest): Promise<AskUserQuestionAnswer>;\n}',
+  },
+  {
+    name: 'UserRole',
+    declaration: 'export type UserRole = \'admin\' | \'user\';',
+  },
+  {
+    name: 'UserStatus',
+    declaration: 'export type UserStatus = \'active\' | \'disabled\';',
   },
   {
     name: 'WebBootEntry',

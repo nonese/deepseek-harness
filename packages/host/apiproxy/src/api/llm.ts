@@ -24,6 +24,11 @@ export interface ConfigurableProviderView {
   /** Whether the route is currently registered (its models are requestable). */
   active: boolean
   /**
+   * Model ids this authenticated caller can request through deployment-managed
+   * credentials. The credential value never crosses the wire.
+   */
+  managedModels?: string[]
+  /**
    * Whether the owning adapter knows this route only because configuration
    * declared it. Absent when the adapter draws no such distinction, so a
    * surface must treat absence as "unknown", not as "shipped".

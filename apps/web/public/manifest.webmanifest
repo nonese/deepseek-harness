@@ -1,16 +1,8 @@
 {
   "id": "/",
-  "name": "DeepSeek Harness",
-  "short_name": "DSH",
+  "name": "Harness",
+  "short_name": "Harness",
   "start_url": "/",
   "scope": "/",
-  "display": "fullscreen",
-  "icons": [
-    {
-      "src": "/favicon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any"
-    }
-  ]
+  "display": "fullscreen"
 }

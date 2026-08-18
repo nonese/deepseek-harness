@@ -1,0 +1,313 @@
+.page {
+  position: relative;
+  min-height: 100vh;
+  min-height: 100svh;
+  overflow: auto;
+  box-sizing: border-box;
+  background: var(--dsw-specific-login-bg);
+  color: var(--dsw-specific-login-label-primary);
+  color-scheme: light;
+}
+
+.scene {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  pointer-events: none;
+  user-select: none;
+}
+
+.content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: min(100%, 720px);
+  min-height: 100vh;
+  min-height: 100svh;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: clamp(70px, 9vh, 92px) 48px 52px clamp(70px, 6.4vw, 96px);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: 8px;
+  color: var(--dsw-specific-login-label-primary);
+  font-size: 29px;
+  line-height: 36px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.brand img {
+  display: block;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.panel {
+  width: min(100%, 580px);
+  margin-top: clamp(34px, 4.7vh, 48px);
+  box-sizing: border-box;
+  padding: clamp(42px, 5.4vh, 56px) 50px 44px;
+  border: 1px solid var(--dsw-specific-login-focus);
+  border-radius: 28px;
+  background: var(--dsw-specific-login-panel);
+  box-shadow: var(--dsw-shadow-lv3);
+  backdrop-filter: blur(22px) saturate(108%);
+}
+
+.panel h1 {
+  margin: 0;
+  color: var(--dsw-specific-login-label-primary);
+  font-size: clamp(38px, 3.1vw, 46px);
+  line-height: 1.2;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+}
+
+.lead {
+  margin: 10px 0 34px;
+  color: var(--dsw-specific-login-label-secondary);
+  font-size: 17px;
+  line-height: 26px;
+}
+
+.ssoButton,
+.loginButton {
+  width: 100%;
+  border-radius: 12px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.ssoButton {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 74px;
+  padding: 0 18px;
+  border: 1px solid var(--dsw-specific-login-border);
+  background: var(--dsw-specific-login-control);
+  color: var(--dsw-specific-login-primary);
+  font-size: 19px;
+}
+
+.ssoLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.ssoButton:hover:not(:disabled),
+.ssoButton:focus-visible:not(:disabled) {
+  border-color: var(--dsw-specific-login-primary);
+  background: var(--dsw-specific-login-meta);
+  box-shadow: 0 0 0 3px var(--dsw-specific-login-focus);
+}
+
+.ssoButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.buttonMeta {
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--dsw-specific-login-meta);
+  color: var(--dsw-specific-login-primary);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 28px 0 25px;
+  color: var(--dsw-specific-login-label-tertiary);
+  font-size: 16px;
+}
+
+.divider::before,
+.divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--dsw-specific-login-border);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.form label {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  color: var(--dsw-specific-login-label-secondary);
+  font-size: 17px;
+  font-weight: 550;
+}
+
+.form input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 54px;
+  padding: 0 14px;
+  border: 1px solid var(--dsw-specific-login-border);
+  border-radius: 10px;
+  outline: none;
+  background: var(--dsw-specific-login-input);
+  color: var(--dsw-specific-login-label-primary);
+  font-size: 16px;
+}
+
+.form input:focus {
+  border-color: var(--dsw-specific-login-primary);
+  box-shadow: 0 0 0 3px var(--dsw-specific-login-focus);
+}
+
+.form input::placeholder {
+  color: var(--dsw-specific-login-label-caption);
+}
+
+.loginButton {
+  height: 62px;
+  margin-top: 2px;
+  border: 1px solid var(--dsw-specific-login-primary);
+  background: var(--dsw-specific-login-primary);
+  color: var(--dsw-specific-login-primary-label);
+  font-size: 20px;
+}
+
+.loginButton:hover:not(:disabled),
+.loginButton:focus-visible {
+  border-color: var(--dsw-specific-login-primary-hover);
+  background: var(--dsw-specific-login-primary-hover);
+  box-shadow: 0 0 0 3px var(--dsw-specific-login-focus);
+}
+
+.loginButton:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.error {
+  margin-top: -4px;
+  padding: 10px 12px;
+  border-radius: 7px;
+  background: var(--dsw-specific-login-error-bg);
+  color: var(--dsw-specific-login-error-label);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.help {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 24px 0 0;
+  color: var(--dsw-specific-login-label-tertiary);
+  font-size: 15px;
+  line-height: 20px;
+}
+
+.help span {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+@media (max-width: 1050px) {
+  .content {
+    align-items: center;
+    width: 100%;
+    padding: 30px 24px 52px;
+  }
+
+  .brand {
+    align-self: flex-start;
+    margin-left: 0;
+    font-size: 24px;
+  }
+
+  .panel {
+    width: min(100%, 580px);
+    margin-top: 28px;
+  }
+
+  .scene {
+    object-position: 28% center;
+  }
+}
+
+@media (max-width: 640px) {
+  .page {
+    overflow: auto;
+  }
+
+  .content {
+    justify-content: flex-start;
+    padding: 24px 16px 36px;
+  }
+
+  .brand {
+    font-size: 22px;
+  }
+
+  .brand img {
+    width: 38px;
+    height: 38px;
+  }
+
+  .panel {
+    margin-top: 20px;
+    padding: 32px 24px 30px;
+    border-radius: 22px;
+    background: var(--dsw-specific-login-panel-mobile);
+    backdrop-filter: blur(18px) saturate(104%);
+  }
+
+  .panel h1 {
+    font-size: clamp(30px, 9vw, 38px);
+  }
+
+  .lead {
+    margin-bottom: 28px;
+    font-size: 17px;
+  }
+
+  .ssoButton {
+    height: 68px;
+    font-size: 17px;
+  }
+
+  .ssoLabel {
+    gap: 10px;
+  }
+
+  .buttonMeta {
+    font-size: 13px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ssoButton,
+  .loginButton {
+    transition: none;
+  }
+}

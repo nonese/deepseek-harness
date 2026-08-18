@@ -66,6 +66,7 @@ function harness(options: {
   providersReject?: boolean
   setFailure?: string
   setReject?: string
+  managedModels?: string[]
 } = {}) {
   if (document.getElementById('root') === null) {
     const appRoot = document.createElement('div')
@@ -95,6 +96,7 @@ function harness(options: {
               settingsNs: options.providerSettingsNs ?? 'llm-deepseek',
               settingsPath: [],
               active: options.providerActive ?? true,
+              ...options.managedModels === undefined ? {} : { managedModels: options.managedModels },
             }],
         }))
       },
@@ -246,6 +248,7 @@ describe('DeepSeekOnboardingDialog', () => {
       harness({ provider: false }),
       harness({ providerSettingsNs: '' }),
       harness({ configured: () => true, credential: { source: 'env', writable: false } }),
+      harness({ managedModels: ['deepseek-v4-flash'] }),
     ]) {
       const view = render(<DeepSeekOnboardingDialog {...h.props} />)
       await act(async () => { await h.controller.load() })

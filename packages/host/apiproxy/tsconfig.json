@@ -9,6 +9,9 @@
   ],
   "references": [
     {
+      "path": "../../identity/auth"
+    },
+    {
       "path": "../../goal/goal"
     },
     {

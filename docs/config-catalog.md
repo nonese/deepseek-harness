@@ -340,6 +340,26 @@ export interface Config {
 
 Source: [`packages/attachment/attachment-local/src/index.ts:24`](../packages/attachment/attachment-local/src/index.ts)
 
+<a id="deepseek-aidsh-auth-file"></a>
+
+## `@deepseek-ai/dsh-auth-file`
+
+```ts config-catalog
+/** File-provider configuration. */
+export interface Config {
+  /** Server data root. Defaults to `<DSH_HOME>/server`. */
+  root?: string
+  /** Local browser-session lifetime. Defaults to 12 hours. */
+  sessionTtlHours?: number
+  /** Initial administrator username when the user file is absent. */
+  bootstrapUsername?: string
+  /** Environment variable carrying the initial administrator password. */
+  bootstrapPasswordEnv?: string
+}
+```
+
+Source: [`packages/identity/auth-file/src/index.ts:89`](../packages/identity/auth-file/src/index.ts)
+
 <a id="deepseek-aidsh-bash-local"></a>
 
 ## `@deepseek-ai/dsh-bash-local`
@@ -407,10 +427,12 @@ export interface ConnectionConfig {
   trustedHosts?: string[]
   /** Maximum buffered JSON body for every `/api` request. */
   maxRequestBodyBytes?: number
+  /** Authentication cookie name shared with the browser auth routes. */
+  authCookieName?: string
 }
 ```
 
-Source: [`packages/client/connection/src/index.ts:50`](../packages/client/connection/src/index.ts)
+Source: [`packages/client/connection/src/index.ts:51`](../packages/client/connection/src/index.ts)
 
 <a id="deepseek-aidsh-client-hmr"></a>
 
@@ -753,7 +775,27 @@ export interface Config {
 }
 ```
 
-Source: [`packages/host/apiproxy/src/index.ts:41`](../packages/host/apiproxy/src/index.ts)
+Source: [`packages/host/apiproxy/src/index.ts:45`](../packages/host/apiproxy/src/index.ts)
+
+<a id="deepseek-aidsh-host-auth-web"></a>
+
+## `@deepseek-ai/dsh-host-auth-web`
+
+Requires: `auth` · `credentials` · `sessions` · `webServer` · `workspaceRegistry`
+
+```ts config-catalog
+/** Browser authentication route configuration. */
+export interface Config {
+  /** Cookie name. Defaults to `harness_session`. */
+  cookieName?: string
+  /** Add the Secure cookie attribute. Enable when the public origin is HTTPS. */
+  secureCookie?: boolean
+  /** Maximum JSON request body. Defaults to 64 KiB. */
+  maxBodyBytes?: number
+}
+```
+
+Source: [`packages/host/auth-web/src/index.ts:41`](../packages/host/auth-web/src/index.ts)
 
 <a id="deepseek-aidsh-host-directory-picker-browse"></a>
 
@@ -889,7 +931,7 @@ export interface DeepSeekCatalogModel {
 
 Depends on: [`RetryPolicyConfig`](../packages/llm/llm/src/index.ts)
 
-Source: [`packages/llm/llm-deepseek/src/index.ts:62`](../packages/llm/llm-deepseek/src/index.ts)
+Source: [`packages/llm/llm-deepseek/src/index.ts:68`](../packages/llm/llm-deepseek/src/index.ts)
 
 <a id="deepseek-aidsh-llm-pi-ai"></a>
 
@@ -1513,12 +1555,18 @@ export interface Config {
    * `process.cwd()`). Normal agent calls use their session cwd instead.
    */
   workspaceRoot?: string
+  /** Deployment ceiling; calls and persisted session overrides cannot exceed it. */
+  maximumMode?: SandboxMode
+  /** Host-private tree hidden from confined subprocesses (for example `$DSH_HOME`). */
+  privateRoot?: string
+  /** Parent whose direct children are authenticated user roots. Requires `privateRoot`. */
+  accessRootParent?: string
 }
 ```
 
 Depends on: [`SandboxMode`](subsystems/sandbox.md)
 
-Source: [`packages/sandbox/sandbox-policy/src/index.ts:67`](../packages/sandbox/sandbox-policy/src/index.ts)
+Source: [`packages/sandbox/sandbox-policy/src/index.ts:116`](../packages/sandbox/sandbox-policy/src/index.ts)
 
 <a id="deepseek-aidsh-sdk-jsonrpc-server"></a>
 
@@ -2587,7 +2635,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/fs/tool-str-replace-editor/src/index.ts:497`](../packages/fs/tool-str-replace-editor/src/index.ts)
+Source: [`packages/fs/tool-str-replace-editor/src/index.ts:507`](../packages/fs/tool-str-replace-editor/src/index.ts)
 
 <a id="deepseek-aidsh-tool-subagent"></a>
 
@@ -3096,6 +3144,7 @@ These load from a `cordis.yml` entry with no `config:` block; they declare no co
 Abstract service classes — a deployment loads a concrete implementation package instead ([capability seams](../.agents/notes/implemented/architecture/2026-06-13-capability-seams.md)).
 
 - `@deepseek-ai/dsh-attachment` — abstract `AttachmentStore` ([`packages/attachment/attachment/src/index.ts`](../packages/attachment/attachment/src/index.ts))
+- `@deepseek-ai/dsh-auth` — abstract `AuthService` ([`packages/identity/auth/src/index.ts`](../packages/identity/auth/src/index.ts))
 - `@deepseek-ai/dsh-code-runtime` — abstract `CodeRuntime` ([`packages/code-runtime/code-runtime/src/index.ts`](../packages/code-runtime/code-runtime/src/index.ts))
 - `@deepseek-ai/dsh-compaction` — abstract `CompactionEngine` ([`packages/compaction/compaction/src/index.ts`](../packages/compaction/compaction/src/index.ts))
 - `@deepseek-ai/dsh-credentials` — abstract `CredentialProvider` ([`packages/credentials/credentials/src/index.ts`](../packages/credentials/credentials/src/index.ts))

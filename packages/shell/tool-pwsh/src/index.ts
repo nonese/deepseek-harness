@@ -31,7 +31,7 @@ import type {} from '@deepseek-ai/dsh-jobs'
 import type {} from '@deepseek-ai/dsh-shell-env'
 import type {} from '@deepseek-ai/dsh-user-approval'
 import type { SandboxExecutionPolicy, SandboxMode } from '@deepseek-ai/dsh-sandbox'
-import { ESCALATION_TARGETS, approveEscalation, validateEscalationArgs } from '@deepseek-ai/dsh-sandbox'
+import { approveEscalation, validateEscalationArgs } from '@deepseek-ai/dsh-sandbox'
 import type { SandboxPolicyService } from '@deepseek-ai/dsh-sandbox-policy'
 import type { ShellRunResult } from '@deepseek-ai/dsh-shell'
 import { parseExitStatus } from '@deepseek-ai/dsh-shell'
@@ -196,11 +196,11 @@ const BACKGROUND_OUTPUT_PROPERTIES = {
 export function apply(ctx: Context, config: Config = {}): void {
   const backgroundEnabled = config.enableRunInBackground ?? true
   const defaultMode = ctx.shell.sandboxMode
-  const escalationModes: readonly SandboxMode[] = defaultMode === undefined ? [] : ESCALATION_TARGETS
   const sandboxPolicy: SandboxPolicyService | undefined = defaultMode === undefined ? undefined : ctx.get('sandboxPolicy')
   if (defaultMode !== undefined && sandboxPolicy === undefined) {
     throw new Error('tool-pwsh: the mounted bash executor confines but ctx.sandboxPolicy is missing')
   }
+  const escalationModes: readonly SandboxMode[] = sandboxPolicy?.escalationModes ?? []
   /* jscpd:ignore-end */
   /** Resolve the complete standing policy for this call when a confining executor is mounted. */
   const resolveSandboxPolicy = (exec: ToolExecution): SandboxExecutionPolicy | undefined =>
@@ -227,6 +227,9 @@ export function apply(ctx: Context, config: Config = {}): void {
   ): Promise<SandboxMode> => {
     if (escalationModes.length === 0) {
       throw new Error('sandbox_permissions is not available in this composition (no sandboxing executor to escalate)')
+    }
+    if (!escalationModes.includes(mode as SandboxMode)) {
+      throw new Error(`sandbox escalation to "${mode}" exceeds this deployment's configured maximum`)
     }
     const effectiveMode = (standingPolicy as SandboxExecutionPolicy).mode
     return approveEscalation(
@@ -354,7 +357,10 @@ export function apply(ctx: Context, config: Config = {}): void {
         : undefined
       const policy = approvedMode === undefined
         ? standingPolicy
-        : { ...(standingPolicy as SandboxExecutionPolicy), mode: approvedMode }
+        : sandboxPolicy?.resolve({
+          ...exec.agent === undefined ? {} : { session: exec.agent.session },
+          mode: approvedMode,
+        })
       const workdir = resolveWorkdir(args.workdir, exec)
       const request = {
         command: args.command,

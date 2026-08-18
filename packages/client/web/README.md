@@ -12,6 +12,10 @@ The optional override parameter `seams` forwards the module system's `loadBundle
 
 The shell owns browser-title projection. With a selected session carrying a durable title, it renders `<session title> — <existing HTML title>` and reacts to later title revisions; no selection or a selected untitled session preserves the existing title, and shell unmount restores it. The existing HTML title remains the configurable product suffix.
 
+Authenticated server deployments wrap the plugin runtime in the Harness portal. Its personal Settings page reads and changes the current user's shared DeepSeek opt-in, while the administrator-only System Settings page can replace or remove the server credential and configure or test OIDC without ever receiving stored secret values. The anonymous shell enables enterprise SSO only when `/auth/session` reports a complete active OIDC configuration; callback error codes become bounded user-facing messages, and local login remains available. The ordinary Settings navigation never enters the plugin runtime.
+
+The anonymous login shell layers a translucent form panel over a full-canvas coastal Harness illustration. Wide viewports keep the whale-girl scene visible on the right and blend it into the form area through the illustration's light mist region; narrow viewports crop to that quiet region so the form retains the full content width without a separate image column.
+
 ## Model Experience
 
 None, as the entry shell boots the browser plugin tree; nothing here reaches a model request.

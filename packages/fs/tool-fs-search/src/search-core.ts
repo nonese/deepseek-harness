@@ -27,6 +27,8 @@ import type { RetainedItems } from '@deepseek-ai/dsh-output-retention'
 import type { SubprocessHandle, SubprocessOutcome, SubprocessOutputRead, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
 import type { SaveTextSpill, SpillRef } from '@deepseek-ai/dsh-spill'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
+import type {} from '@deepseek-ai/dsh-fs'
+import type {} from '@deepseek-ai/dsh-sandbox-policy'
 
 /**
  * Default cap on the complete raw `rg` stdout the tools will parse (the
@@ -203,6 +205,7 @@ export function resolveRgPath(): Promise<string> {
  * @param exec - the tool-execution context; supplies the session cwd and the abort signal.
  * @param toolName - `glob` or `grep`, used in error messages.
  * @param argv - the ripgrep arguments (every model value an unquoted argv element; no shell layer exists).
+ * @param requestedPath - model-selected search root, or `undefined` for the session workspace.
  * @param rawOutputMaxBytes - cap on the complete raw stdout the tool will parse.
  * @param graceMs - the seam's terminate-escalation grace period.
  * @param stderrMaxBytes - cap on the retained stderr diagnostic tail.
@@ -213,6 +216,7 @@ export async function runRipgrep(
   exec: ToolExecution,
   toolName: string,
   argv: readonly string[],
+  requestedPath: string | undefined,
   rawOutputMaxBytes: number,
   graceMs: number,
   stderrMaxBytes: number,
@@ -222,6 +226,18 @@ export async function runRipgrep(
   }
   const cwd = exec.agent?.session.header.cwd
   const workdir = cwd ?? process.cwd()
+  const policy = ctx.get('sandboxPolicy')?.resolve({
+    ...exec.agent === undefined ? {} : { session: exec.agent.session },
+  })
+  if (policy?.readableRoot !== undefined) {
+    const [root, target] = await Promise.all([
+      ctx.fs.resolve(policy.readableRoot, { signal: exec.signal }),
+      ctx.fs.resolve(requestedPath ?? '.', { cwd: workdir, signal: exec.signal }),
+    ])
+    if (!ctx.fs.contains(root, target)) {
+      throw new SearchError(`${toolName} path is outside the authenticated user root`, 'SEARCH_FAILED')
+    }
+  }
   let handle: SubprocessHandle
   try {
     handle = ctx.subprocess.spawn({
@@ -241,7 +257,6 @@ export async function runRipgrep(
     // above and this call (or when the platform-package resolution rejects).
     // The static narrowing that proves this re-check "always false" cannot
     // see AbortSignal state changes.
-    // oxlint-disable-next-line typescript/no-unnecessary-condition
     if (exec.signal.aborted) {
       throw new SearchError(`${toolName} was aborted before completion (tool timeout or caller cancellation)`, 'SEARCH_ABORTED')
     }
@@ -260,7 +275,6 @@ export async function runRipgrep(
   }
   // The signal can abort while the spawn is awaited; the static narrowing that
   // proves this re-check "always false" cannot see AbortSignal state changes.
-  // oxlint-disable-next-line typescript/no-unnecessary-condition
   if (exec.signal.aborted) {
     throw new SearchError(`${toolName} was aborted before completion (tool timeout or caller cancellation)`, 'SEARCH_ABORTED')
   }

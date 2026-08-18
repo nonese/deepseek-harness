@@ -23,6 +23,13 @@ import { bwrapProfileArgs, landlockProfileArgs, seatbeltProfileArgs } from '../s
 
 const RO: SandboxPolicy = { mode: 'read-only', workspaceRoot: '/ws' }
 const WW: SandboxPolicy = { mode: 'workspace-write', workspaceRoot: '/ws' }
+const PRIVATE_RO: SandboxPolicy = {
+  mode: 'read-only',
+  workspaceRoot: '/harness/server/users/user-1/projects/project-1',
+  privateRoot: '/harness',
+  readableRoot: '/harness/server/users/user-1',
+}
+const PRIVATE_WW: SandboxPolicy = { ...PRIVATE_RO, mode: 'workspace-write' }
 
 async function setup(config: Config = {}, internals: LocalSandboxProvider['internals'] = {}) {
   const ctx = new Context()
@@ -73,6 +80,20 @@ describe('profile dialects', () => {
     ])
   })
 
+  it('bwrap hides the private tree and re-exposes only the authenticated user root', () => {
+    expect(bwrapProfileArgs(PRIVATE_WW)).toEqual([
+      '--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--die-with-parent',
+      '--tmpfs', '/tmp',
+      '--tmpfs', '/harness',
+      '--dir', '/harness/server',
+      '--dir', '/harness/server/users',
+      '--dir', '/harness/server/users/user-1',
+      '--ro-bind', '/harness/server/users/user-1', '/harness/server/users/user-1',
+      '--bind', '/harness/server/users/user-1/projects/project-1', '/harness/server/users/user-1/projects/project-1',
+      '--remount-ro', '/harness',
+    ])
+  })
+
   it('landlock read-only: readable tree plus a writable /dev/null, nothing else', () => {
     // /dev/null specifically, NOT /dev: a whole-/dev grant would let confined
     // commands write real host paths beneath it (/dev/shm) under read-only.
@@ -103,6 +124,12 @@ describe('profile dialects', () => {
     const grant = `(subpath "${realpathSync(tmpdir())}")`
     expect(profile).toContain(grant)
     expect(profile.split(grant)).toHaveLength(2)
+  })
+
+  it('seatbelt denies the private tree and allows only the authenticated user slice', () => {
+    const profile = seatbeltProfileArgs(PRIVATE_RO)[1] as string
+    expect(profile).toContain('(deny file-read* (subpath "/harness"))')
+    expect(profile).toContain('(allow file-read* (subpath "/harness/server/users/user-1"))')
   })
 })
 
@@ -190,6 +217,17 @@ describe('the platform chains', () => {
       }],
     })
     expect(probeLandlock).toHaveBeenCalledWith(launcher)
+  })
+
+  it('fails closed when Landlock cannot express a private read-isolation exclusion', async () => {
+    const launcher = fakeLauncher()
+    const { sandbox } = await setup({}, {
+      platform: 'linux',
+      probeBwrap: () => false,
+      probeLandlock: () => 'full',
+      landlockLauncher: launcher,
+    })
+    expect(() => sandbox.confine(['true'], PRIVATE_RO)).toThrow(/cannot enforce the deployment's private read-isolation root/)
   })
 
   it('darwin selects its sole candidate WITHOUT probing: nothing to arbitrate', async () => {

@@ -12,9 +12,10 @@ import { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import SandboxPolicyService, { SANDBOX_MODES, effectiveSandboxMode, setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
+import type { Config } from '@deepseek-ai/dsh-sandbox-policy'
 import SystemPrompt, { renderContextSnapshot, renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 
-async function mounted(config: { mode?: 'read-only' | 'workspace-write' | 'danger-full-access'; workspaceRoot?: string } = {}) {
+async function mounted(config: Config = {}) {
   const ctx = new Context()
   await ctx.plugin(SandboxPolicyService, config)
   return ctx
@@ -107,6 +108,32 @@ describe('SandboxPolicyService', () => {
     }
   })
 
+  it.skipIf(process.platform === 'win32')('canonicalizes a missing user-root suffix through the same existing private ancestor', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-policy-private-'))
+    try {
+      const physical = join(root, 'physical')
+      const alias = join(root, 'alias')
+      mkdirSync(physical)
+      symlinkSync(physical, alias, 'dir')
+      const accessRootParent = join(alias, 'server', 'users')
+      const ctx = await mounted({
+        mode: 'workspace-write',
+        maximumMode: 'workspace-write',
+        workspaceRoot: accessRootParent,
+        privateRoot: alias,
+        accessRootParent,
+      })
+
+      expect(ctx.sandboxPolicy.privateRoot).toBe(realpathSync.native(physical))
+      expect(ctx.sandboxPolicy.accessRootParent).toBe(join(realpathSync.native(physical), 'server', 'users'))
+      expect(ctx.sandboxPolicy.resolve({
+        session: session('sess-fresh-private', join(accessRootParent, 'user-1', 'projects', 'project-1')),
+      }).readableRoot).toBe(join(realpathSync.native(physical), 'server', 'users', 'user-1'))
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('lets an approved mode outrank the session mode while retaining its root', async () => {
     const ctx = await mounted({ workspaceRoot: '/fallback' })
     const active = session('sess-approved', '/projects/approved')
@@ -116,6 +143,48 @@ describe('SandboxPolicyService', () => {
       workspaceRoot: resolve('/projects/approved'),
       sessionId: 'sess-approved',
     })
+  })
+
+  it('enforces a deployment ceiling for schemas, persisted overrides, and explicit retries', async () => {
+    const ctx = await mounted({ mode: 'workspace-write', maximumMode: 'workspace-write', workspaceRoot: '/fallback' })
+    const active = session('sess-ceiling', '/projects/ceiling')
+    setSandboxMode(active, 'danger-full-access')
+
+    expect(ctx.sandboxPolicy.maximumMode).toBe('workspace-write')
+    expect(ctx.sandboxPolicy.escalationModes).toEqual(['workspace-write'])
+    expect(ctx.sandboxPolicy.resolve({ session: active }).mode).toBe('workspace-write')
+    expect(() => ctx.sandboxPolicy.resolve({ session: active, mode: 'danger-full-access' }))
+      .toThrow(/exceeds this deployment's maximum/)
+  })
+
+  it('derives one readable user root while hiding the surrounding private tree', async () => {
+    const ctx = await mounted({
+      mode: 'workspace-write',
+      maximumMode: 'workspace-write',
+      workspaceRoot: '/srv/harness/server/users',
+      privateRoot: '/srv/harness',
+      accessRootParent: '/srv/harness/server/users',
+    })
+    expect(ctx.sandboxPolicy.resolve({
+      session: session('sess-private', '/srv/harness/server/users/user-1/projects/project-1'),
+    })).toEqual({
+      mode: 'workspace-write',
+      workspaceRoot: resolve('/srv/harness/server/users/user-1/projects/project-1'),
+      privateRoot: resolve('/srv/harness'),
+      readableRoot: resolve('/srv/harness/server/users/user-1'),
+      sessionId: 'sess-private',
+    })
+    expect(() => ctx.sandboxPolicy.resolve({ session: session('sess-escape', '/srv/harness/server/users') }))
+      .toThrow(/outside a configured user root/)
+  })
+
+  it('rejects unsafe ceiling and private-root configurations at load', async () => {
+    await expect(mounted({ mode: 'danger-full-access', maximumMode: 'workspace-write' }))
+      .rejects.toThrow(/default mode .* exceeds maximumMode/)
+    await expect(mounted({ privateRoot: '/srv/harness' }))
+      .rejects.toThrow(/must be configured together/)
+    await expect(mounted({ privateRoot: '/', accessRootParent: '/users' }))
+      .rejects.toThrow(/must not be a filesystem root/)
   })
 
   it('uses the configured root when a session has no cwd', async () => {

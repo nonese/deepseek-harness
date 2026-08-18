@@ -75,12 +75,14 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
+    "@deepseek-ai/dsh-auth": "workspace:^",
     "@deepseek-ai/cordis": "workspace:^",
     "@deepseek-ai/dsh-agent-presets": "workspace:^",
     "@deepseek-ai/dsh-cordis-host-runner": "workspace:^",
     "@deepseek-ai/dsh-invariants": "workspace:^"
   },
   "devDependencies": {
+    "@deepseek-ai/dsh-auth": "workspace:^",
     "@deepseek-ai/cordis": "workspace:^",
     "@deepseek-ai/dsh-agent-presets": "workspace:^",
     "@deepseek-ai/dsh-cordis-host-runner": "workspace:^",

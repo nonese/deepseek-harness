@@ -15,8 +15,11 @@
 import { Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
+import type { AuthPrincipal } from '@deepseek-ai/dsh-auth'
+import type {} from '@deepseek-ai/dsh-session-persistence'
 import type { ApiProxy } from './api/index.ts'
 import { createApiProxy, DEFAULT_COLD_BLANK_PROBE_MAX_BYTES } from './api-proxy.ts'
+import { createUserScopedApiProxy } from './scoped-api-proxy.ts'
 import {
   DEFAULT_SESSION_LOG_COMPRESSION_LEVEL,
   type SessionLogCompressionLevel,
@@ -28,6 +31,7 @@ export { toFetchHandler } from './fetch/handler.ts'
 export { AbstractApiClient, InProcessApiClient } from './fetch/client.ts'
 export type { IApiClient } from './fetch/client.ts'
 export { createApiProxy } from './api-proxy.ts'
+export { createUserScopedApiProxy } from './scoped-api-proxy.ts'
 export type { ApiProxyDefaults } from './api-proxy.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -92,6 +96,7 @@ export class ApiProxyService extends Service implements ApiProxy {
   readonly events: ApiProxy['events']
   readonly downloads: ApiProxy['downloads']
   readonly respond: ApiProxy['respond']
+  private readonly scoped = new Map<string, ApiProxy>()
 
   constructor(ctx: Context, config: Config) {
     super(ctx, 'apiProxy')
@@ -122,6 +127,25 @@ export class ApiProxyService extends Service implements ApiProxy {
     // createApiProxy returns closures (no `this` capture), so the bind is
     // behavior-neutral.
     this.respond = api.respond.bind(api)
+  }
+
+  /**
+   * Return the authorization view for one authenticated user. The cache key
+   * includes role so an administrator demotion cannot retain configuration
+   * access through an earlier view.
+   * @param principal - current, provider-validated browser principal.
+   * @returns the user's path-filtered API view.
+   */
+  forPrincipal(principal: AuthPrincipal): ApiProxy {
+    const auth = this.ctx.get('auth')
+    if (auth === undefined) throw new Error('apiProxy.forPrincipal: auth service is absent')
+    const key = `${String(principal.user.id)}:${principal.user.role}`
+    let api = this.scoped.get(key)
+    if (api === undefined) {
+      api = createUserScopedApiProxy(this.ctx, this, principal, auth.userPaths(principal.user.id))
+      this.scoped.set(key, api)
+    }
+    return api
   }
 }
 

@@ -2,9 +2,10 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-attachment'
+import type { AuthPrincipal } from '@deepseek-ai/dsh-auth'
 // Activates the webServer Context merge used below.
 import type { WebRoute, WebUpgradeRoute } from '@deepseek-ai/dsh-host-webserver'
-import { toFetchHandler } from '@deepseek-ai/dsh-host-apiproxy'
+import { toFetchHandler, type ApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
 import { API_PATH, HOST_EVENTS_PATH, MUX_EVENTS_PATH } from './api-path.ts'
 import { bridge, DEFAULT_MAX_REQUEST_BODY_BYTES } from './http-bridge.ts'
 import { assertTrustedAuthority, isTrustedApiRequest } from './api-request-trust.ts'
@@ -59,28 +60,82 @@ export interface ConnectionConfig {
   trustedHosts?: string[]
   /** Maximum buffered JSON body for every `/api` request. */
   maxRequestBodyBytes?: number
+  /** Authentication cookie name shared with the browser auth routes. */
+  authCookieName?: string
 }
 
 export const Config: z<ConnectionConfig> = z.object({
   trustedHosts: z.array(String).default([]),
   maxRequestBodyBytes: z.natural().min(1).default(DEFAULT_MAX_REQUEST_BODY_BYTES),
+  authCookieName: z.string().default('harness_session'),
 })
 
+interface PrincipalApiProxy extends ApiProxy {
+  forPrincipal(principal: AuthPrincipal): ApiProxy
+}
+
+interface AuthenticatedApiAccess {
+  readonly api: ApiProxy
+  readonly principal?: AuthPrincipal
+}
+
+const ADMIN_ONLY_REMOTE_NAMESPACES = new Set(['dynamicCordisRunner'])
+
+function cookieValue(header: string | null | undefined, name: string): string | undefined {
+  if (header === null || header === undefined) return undefined
+  for (const part of header.split(';')) {
+    const at = part.indexOf('=')
+    if (at === -1 || part.slice(0, at).trim() !== name) continue
+    try {
+      return decodeURIComponent(part.slice(at + 1).trim())
+    } catch {
+      return undefined
+    }
+  }
+  return undefined
+}
+
+async function authenticatedApi(
+  ctx: Context,
+  cookieHeader: string | null | undefined,
+  cookieName: string,
+): Promise<AuthenticatedApiAccess | undefined> {
+  const api = ctx.get('apiProxy')
+  if (api === undefined) return undefined
+  const auth = ctx.get('auth')
+  if (auth === undefined) return { api }
+  const token = cookieValue(cookieHeader, cookieName)
+  if (token === undefined) return undefined
+  const principal = await auth.authenticateToken(token)
+  if (principal === undefined) return undefined
+  const scoped = api as PrincipalApiProxy
+  if (typeof scoped.forPrincipal !== 'function') {
+    throw new Error('client-connection: authenticated deployment requires apiProxy.forPrincipal')
+  }
+  return { api: scoped.forPrincipal(principal), principal }
+}
+
+function apiEndpoint(pathname: string): string | undefined {
+  return pathname.startsWith(`${API_PATH}/`) ? pathname.slice(API_PATH.length + 1) : undefined
+}
+
+function remoteRequiresAdministrator(endpoint: string | undefined): boolean {
+  if (endpoint === undefined) return false
+  const slash = endpoint.indexOf('/')
+  return slash > 0 && ADMIN_ONLY_REMOTE_NAMESPACES.has(endpoint.slice(0, slash))
+}
+
 /**
- * Methods gated to loopback even on a trusted-host deployment. Native dialogs
- * act on the host machine; the settings and credential domains mutate the
- * user's configuration and secret store, and READING them is equally
- * privileged — `settings.describe` returns every exposed namespace's
- * configuration and `credentials.describe` reports whether an arbitrary
- * environment-variable name is configured and where from, which is
- * reconnaissance no anonymous caller should have. `trustedHosts` is a
- * DNS-rebinding fence, explicitly not authentication, so the whole
- * configuration plane stays loopback-same-origin until a real authentication
- * layer exists. `llm.discoverModels` belongs to that plane on both counts: it
- * carries a draft credential, and it makes the HOST issue a GET to a URL the
- * caller chose and reports back the status or the parsed body — an anonymous
- * LAN caller would have a probe for whatever the host can reach and the
- * browser cannot.
+ * Methods gated to loopback when the composition has no authentication.
+ * Native dialogs act on the host machine; the settings and credential domains
+ * mutate the user's configuration and secret store, and reading them is
+ * equally privileged. `trustedHosts` is a DNS-rebinding fence, not
+ * authentication. An authenticated composition instead requires a live
+ * browser principal before dispatch and applies the principal-scoped ApiProxy,
+ * whose role and path checks own authorization. `llm.discoverModels` belongs
+ * to the unauthenticated loopback set on two counts: it carries a draft
+ * credential, and it makes the host issue a GET to a caller-selected URL and
+ * report the status or parsed body.
  *
  * The model catalog (`llm.providers`, `llm.models`) is deliberately NOT here:
  * it carries provider ids, display names, and model lists — no endpoints,
@@ -122,8 +177,10 @@ const PRIVILEGED_METHODS = new Set([
  * Mounts the API gateway under the browser transport prefix. Every request on
  * the prefix passes the browser-trust fence first (DNS-rebinding and
  * cross-site defense — [api-request-trust](./api-request-trust.ts));
- * privileged methods additionally pass it with an empty trust list, which
- * pins them to loopback.
+ * deployments without authentication additionally pass privileged methods
+ * with an empty trust list, which pins them to loopback. Authenticated
+ * deployments require a principal and dispatch through its authorization
+ * view instead.
  * @param ctx - Host plugin context.
  * @param config - resolved plugin config (schema defaults applied).
  */
@@ -131,19 +188,19 @@ export function apply(ctx: Context, config?: ConnectionConfig): void {
   // The Loader resolves schema defaults; hand-built test contexts may pass none.
   const trustedHosts = config?.trustedHosts ?? []
   const maxRequestBodyBytes = config?.maxRequestBodyBytes ?? DEFAULT_MAX_REQUEST_BODY_BYTES
+  const authCookieName = config?.authCookieName ?? 'harness_session'
   // Config boundary: a malformed entry fails the load loudly here rather than
   // silently authorizing its hostname prefix at request time.
   for (const entry of trustedHosts) assertTrustedAuthority(entry)
   if (ctx.get('apiProxy') !== undefined) assertImageBodyCapacity(ctx, maxRequestBodyBytes)
   const connection = new HostConnectionService(ctx, trustedHosts)
-  const fetchHandler = connection.createSharedFetchHandler(API_PATH, {
+  const sharedFetchHandler = connection.createSharedFetchHandler(API_PATH, {
     async fetch(request) {
       const pathname = new URL(request.url).pathname
-      const method = pathname.startsWith(`${API_PATH}/`)
-        ? pathname.slice(API_PATH.length + 1)
-        : undefined
+      const method = apiEndpoint(pathname)
       if (method !== undefined
         && PRIVILEGED_METHODS.has(method)
+        && ctx.get('auth') === undefined
         && !isTrustedApiRequest(request, [])) {
         return new Response('forbidden', { status: 403 })
       }
@@ -153,11 +210,24 @@ export function apply(ctx: Context, config?: ConnectionConfig): void {
           headers: { connection: 'Upgrade', upgrade: 'websocket' },
         })
       }
-      const apiProxy = ctx.get('apiProxy')
-      if (apiProxy === undefined) return new Response('not found', { status: 404 })
-      return toFetchHandler(apiProxy).fetch(request)
+      const access = await authenticatedApi(ctx, request.headers.get('cookie'), authCookieName)
+      if (access === undefined) return new Response('not found', { status: 404 })
+      return toFetchHandler(access.api).fetch(request)
     },
   })
+  const fetchHandler = {
+    async fetch(request: Request): Promise<Response> {
+      if (ctx.get('auth') !== undefined) {
+        const access = await authenticatedApi(ctx, request.headers.get('cookie'), authCookieName)
+        if (access === undefined) return new Response('authentication required', { status: 401 })
+        if (remoteRequiresAdministrator(apiEndpoint(new URL(request.url).pathname))
+          && access.principal?.user.role !== 'admin') {
+          return new Response('administrator required', { status: 403 })
+        }
+      }
+      return sharedFetchHandler.fetch(request)
+    },
+  }
   const route: WebRoute = {
     kind: 'prefix',
     path: API_PATH,
@@ -173,7 +243,24 @@ export function apply(ctx: Context, config?: ConnectionConfig): void {
   ctx.effect(() => ctx.webServer.register(route), 'client-connection: /api route')
   ctx.inject(['apiProxy'], (apiCtx) => {
     assertImageBodyCapacity(apiCtx, maxRequestBodyBytes)
-    const downlinks = new WebSocketDownlinks(apiCtx.apiProxy)
+    const downlinks = new Map<string, WebSocketDownlinks>()
+    const resolveDownlinks = async (req: Parameters<WebUpgradeRoute['handler']>[0]): Promise<WebSocketDownlinks | undefined> => {
+      const access = await authenticatedApi(apiCtx, req.headers.cookie, authCookieName)
+      if (access === undefined) return undefined
+      const auth = apiCtx.get('auth')
+      if (auth === undefined) {
+        let shared = downlinks.get('anonymous')
+        if (shared === undefined) downlinks.set('anonymous', shared = new WebSocketDownlinks(access.api))
+        return shared
+      }
+      const token = cookieValue(req.headers.cookie, authCookieName)
+      const principal = token === undefined ? undefined : await auth.authenticateToken(token)
+      if (principal === undefined) return undefined
+      const key = `${String(principal.user.id)}:${principal.user.role}`
+      let scoped = downlinks.get(key)
+      if (scoped === undefined) downlinks.set(key, scoped = new WebSocketDownlinks(access.api))
+      return scoped
+    }
     const registerDownlink = (
       path: string,
       handle: WebUpgradeRoute['handler'],
@@ -189,8 +276,24 @@ export function apply(ctx: Context, config?: ConnectionConfig): void {
         },
       }), `client-connection: ${path} WebSocket`)
     }
-    apiCtx.effect(() => () => downlinks.close(), 'client-connection: WebSocket downlinks')
-    registerDownlink(MUX_EVENTS_PATH, (req, socket, head) => { downlinks.handleMux(req, socket, head) })
-    registerDownlink(HOST_EVENTS_PATH, (req, socket, head) => { downlinks.handleHost(req, socket, head) })
+    apiCtx.effect(() => async () => {
+      await Promise.all([...downlinks.values()].map(owner => owner.close()))
+    }, 'client-connection: WebSocket downlinks')
+    registerDownlink(MUX_EVENTS_PATH, async (req, socket, head) => {
+      const owner = await resolveDownlinks(req)
+      if (owner === undefined) {
+        rejectWebSocketUpgrade(socket)
+        return
+      }
+      owner.handleMux(req, socket, head)
+    })
+    registerDownlink(HOST_EVENTS_PATH, async (req, socket, head) => {
+      const owner = await resolveDownlinks(req)
+      if (owner === undefined) {
+        rejectWebSocketUpgrade(socket)
+        return
+      }
+      owner.handleHost(req, socket, head)
+    })
   })
 }

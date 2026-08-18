@@ -1,0 +1,57 @@
+# Agent Note: Single-process multi-user Harness server
+
+Status: implemented
+
+English | [中文](2026-08-14-single-process-multi-user-server.zh.md)
+
+## Problem
+
+The Web composition assumed one trusted person operating one host account. Browser clients shared the process-global workspace, session, settings, credential, and event surfaces, while the process sandbox constrained writes but deliberately allowed host reads. Merely adding a login screen would therefore authenticate navigation without creating an authorization or data-isolation boundary.
+
+The target deployment is a long-running intranet service for tens of independent users. It must retain file-backed persistence and one Host process, avoid per-user containers and external databases, and provide administrator and ordinary-user roles. OIDC is a deployment integration point, while local credentials remain available for testing and emergency access.
+
+## Decision
+
+The Web bundle composes three new capability layers:
+
+- `@deepseek-ai/dsh-auth` defines users, roles, revocable browser principals, and program-managed user paths.
+- `@deepseek-ai/dsh-auth-file` stores owner-only, versioned JSON records under `<DSH_HOME>/server/system/auth`, hashes local passwords with salted scrypt, stores only browser-token digests, and creates `<DSH_HOME>/server/users/<UserId>/...` from a stable random identifier.
+- `@deepseek-ai/dsh-host-auth-web` owns same-origin local and OIDC login, logout, project, and administrator routes. Its OIDC relying party uses provider discovery, Authorization Code with PKCE S256, state, nonce, rotating JWKS validation, and a single-use in-memory pending flow.
+
+The browser authenticates before loading client plugins or opening `/api` and WebSocket transports. Each authenticated transport receives an `ApiProxy` authorization view keyed by its principal. The view filters list and event streams, checks every addressable session and workspace, constrains project and directory creation, prevents native server-path operations, and accepts approval or question responses only after the matching request appeared on that user's stream. Administrator user APIs expose identity metadata but not project or session content.
+
+Dynamic Cordis plugin management is an administrator capability. The ordinary-user API view removes the shipped `cordis` preset and rejects both session creation and preset selection that name it. A monotonic Host tool guard resolves the current owner from the calling Agent's managed project path and rejects every `cordis_*` execution unless that owner is still an administrator. The Connection Host rejects the `dynamicCordisRunner/*` Remote namespace for non-administrators before a Typert interceptor can claim it. Deployment-configured Host plugins remain process-global and trusted; packages installed inside one user's project remain files in that project and do not become Host plugins unless an administrator changes the deployment composition.
+
+Projects are generated below the user's `projects` directory. Usernames and display names never select a path, so renaming an account does not move data and crafted identity text cannot escape the root. Existing session logs, workspace metadata, attachments, and storage keep their original file providers; session ownership is the immutable canonical `cwd` below a generated user project. This preserves the file-backed format without introducing SQLite or a second persistence system.
+
+The administrator-managed DeepSeek key uses the existing credentials provider under the dedicated `HARNESS_SHARED_DEEPSEEK_API_KEY` reference. The authentication provider stores only opted-in user ids in its owner-only `preferences.json`. For each `deepseek-official` / `deepseek-v4-flash` stream, the adapter resolves the live session path to an active user and selects the managed key only when that user opted in; every other request keeps the ordinary credential route. The principal-scoped `llm.providers` response marks `deepseek-v4-flash` as a managed model only while that preference and credential are both active, so first-run readiness does not request a personal key from an eligible user. Browser APIs return configured and writable state and managed model ids, never the submitted or stored key.
+
+The Web deployment fixes the sandbox default and ceiling at `workspace-write`. A persisted session override and a hand-written tool request cannot exceed that ceiling. Model-facing reads and searches enforce the authenticated readable root before I/O. Confined child processes hide the complete Harness home and re-expose only the authenticated user's tree: bubblewrap uses a private mount overlay and Seatbelt uses a deny/allow read profile. Landlock and Windows ACL fail closed for this deployment because their current providers cannot express the required read exclusion.
+
+The pre-authentication shell and authenticated portal use the visible `Harness` brand. The login shell layers its translucent form panel over one full-canvas coastal illustration: wide viewports retain the whale-girl scene on the right and use the illustration's light mist region as the transition into the form, while narrow viewports crop to that quiet region so the form keeps the full content width. The portal provides private projects, runtime entry, personal shared-model settings, administrator user management, local password reset, and an OIDC login action that is enabled only when the server reports a complete active configuration. Its administrator-only system page reads the effective process, storage, authentication, isolation, request-limit, and managed-model state from protected Host routes; it writes the OIDC issuer, client id, redirect URI, scopes, client authentication method, first-login administrator group, and optional intranet-HTTP exception, tests provider discovery, and replaces secrets without receiving their stored values. It does not enter a user's Harness runtime or present controls that the server cannot apply. Internal package names, environment-variable compatibility, and provider names remain unchanged.
+
+## Security boundary
+
+The Host process and its administrator-configured plugins are trusted and affect every user served by that process. The boundary protects users from one another through transport authorization, canonical path checks, child-process confinement, and administrator-only dynamic plugin controls; it does not claim isolation from malicious code an administrator loads as a Host plugin. Authentication files reject group- or world-readable modes on POSIX, and multiple server processes must not share one auth root.
+
+The browser session cookie is opaque, `HttpOnly`, `SameSite=Lax`, and optionally `Secure`. Mutable auth routes require a matching Origin and bounded JSON bodies. Disabling a user or resetting a local password revokes that user's browser sessions. The last active administrator cannot be demoted or disabled.
+
+The Web CLI binds loopback by default. Its startup provider waits for the authentication capability before publishing configuration, and only an explicit `--host 0.0.0.0` exposes the service to the LAN. That path derives the machine's LAN IPv4 literals into the Host/Origin trust fence; deployments using a DNS name or alias must declare it with `--trusted-host`. Browser RPC correlation uses `crypto.getRandomValues()` because a plain-HTTP LAN address is not a secure context and therefore cannot rely on `crypto.randomUUID()`.
+
+## Alternatives considered
+
+**One container or process per user.** This gives a stronger operating-system boundary and preserves upstream single-user assumptions, but duplicates the runtime, increases idle memory, and adds startup and lifecycle management that the intranet deployment explicitly rejects.
+
+**Changing `HOME` for each request in one process.** Environment variables and process cwd are process-global, while asynchronous user requests overlap. Mutating either would race and could route one user's filesystem operations into another user's data. Stable explicit paths and principal-scoped services avoid that shared mutable state.
+
+**SQLite or an external identity database.** A database would provide mature transaction and query behavior, but it adds a storage technology and operational dependency the deployment does not have. Small owner-only JSON registries with serialized atomic replacement match the existing file-provider posture and expected user count.
+
+**Frontend-only filtering.** Hiding rows and navigation does not protect direct HTTP, WebSocket, download, filesystem, or command calls. Authorization therefore lives at every Host capability boundary; the portal is only a presentation of that decision.
+
+## Consequences
+
+One server process now serves independent users without per-user runtime startup. File persistence remains inspectable and backup-friendly, and a username change cannot affect ownership. The cost is that the shared Host remains a trusted computing base, the auth JSON provider supports only one writer process, and Linux deployments need bubblewrap for shell read isolation. A platform without an enforcing backend refuses model commands instead of silently weakening isolation.
+
+OIDC non-secret settings and immutable `(issuer, sub) → UserId` bindings remain in owner-only `oidc.json`; the client secret uses the existing credentials provider under `HARNESS_OIDC_CLIENT_SECRET`. Preferred username claims never select an existing local account, and the configured `groups` administrator value chooses a role only when the external identity is first created. The current server is intentionally non-collaborative: a project belongs to one user and has no sharing or membership model. The provider contract has no upstream logout endpoint, so Harness logout revokes only the local session.
+
+Verification is split across the real auth provider tests; a real Loader/WebServer/auth HTTP composition test that denies anonymous and ordinary-user access to system settings and proves credential responses are redacted; a local signed OIDC provider that exercises discovery, PKCE, nonce, JWKS validation, ordinary-user creation, and replay denial; adapter composition coverage for opted-in, opted-out, and non-Flash requests; per-user API and event tests; ordinary/admin dynamic Cordis preset, tool-guard, and Remote-runner tests; filesystem symlink-escape tests; sandbox profile and ceiling tests; Web shell tests; and the normal Web build and browser journey.

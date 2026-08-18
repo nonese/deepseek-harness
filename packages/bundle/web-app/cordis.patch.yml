@@ -5,10 +5,11 @@
 # A patch replaces the targeted row's whole `config`, so each row below
 # restates every key it owns.
 #
-# The web-startup plugin injects `cmdlineArgs` and provides `webStartup` as an
-# ordinary Cordis service. Rows configured from flags inject that service, so
-# Loader resolves their expressions only after it exists. The web runtime then
-# provides bind-dependent `webRuntime` values to the trust fence.
+# The web-startup plugin injects `cmdlineArgs` plus `auth` and provides
+# `webStartup` as an ordinary Cordis service. Rows configured from flags inject
+# that service, so Loader resolves their expressions only after authentication
+# and parsed startup values exist. The web runtime then provides bind-dependent
+# `webRuntime` values to the trust fence.
 # `dsh --profile web --help` provides neither service, so no server binds.
 
 # ── surface-specific values the base deliberately omits ─────────────────────
@@ -40,11 +41,47 @@
     # once the web UI owns the choice per session.
     mode: !!js process.env.DSH_TOOLS_MODE
 
+# The shared Web process is a service boundary, so model tools can never
+# escalate to host-wide access. Every session writes only its project, while
+# subprocess reads hide the complete Harness home and re-expose only that
+# authenticated user's generated data root.
+- id: sandbox-policy
+  config:
+    mode: workspace-write
+    maximumMode: workspace-write
+    workspaceRoot: !!js dshHomePath('server', 'users')
+    privateRoot: !!js dshHomePath()
+    accessRootParent: !!js dshHomePath('server', 'users')
+
+- id: approval
+  config:
+    policy: ask
+
+- id: permission
+  config:
+    presets:
+      read-only:
+        sandbox: read-only
+        approval: ask
+      workspace-write:
+        sandbox: workspace-write
+        approval: ask
+
 # ── web-only host rows, the transport layer, and the browser roster ─────────
 
 # `dsh.client` rows are the browser roster the modules node half scans into
 # window.__DSH_BOOT__; the modules row is simultaneously a host row.
 - insert:
+    # Single-process server authentication. User and browser-session records
+    # live under the Harness home; usernames never select directories.
+    - id: auth-file
+      name: '@deepseek-ai/dsh-auth-file'
+      config:
+        root: !!js dshHomePath('server')
+        sessionTtlHours: 12
+        bootstrapUsername: admin
+        bootstrapPasswordEnv: HARNESS_BOOTSTRAP_PASSWORD
+
     - id: code-runtime
       name: '@deepseek-ai/dsh-code-runtime-worker-thread'
 
@@ -103,7 +140,8 @@
       name: '@deepseek-ai/dsh-cordis-host-runner'
 
     # Ordinary provider for the parsed Web flags. Its plugin-level injection
-    # waits for cmdlineArgs; no launcher metadata or special row kind is needed.
+    # waits for cmdlineArgs and auth; no launcher metadata or special row kind
+    # is needed.
     - id: web-startup
       name: '@deepseek-ai/dsh-web-app/startup'
 
@@ -118,6 +156,15 @@
       config:
         host: !!js ctx.webStartup.host ?? '127.0.0.1'
         port: !!js ctx.webStartup.port ?? 3080
+
+    # Login/session and program-managed project routes. OIDC answers with a
+    # non-bypassing not-configured result until a deployment adapter is added.
+    - id: auth-web
+      name: '@deepseek-ai/dsh-host-auth-web'
+      inject: [auth, credentials, sessions, webServer, workspaceRegistry]
+      config:
+        cookieName: harness_session
+        secureCookie: !!js process.env.HARNESS_SECURE_COOKIE === '1'
 
     # Web glue owned by this bundle: resolves the built frontend dist (an
     # assembly fact of dsh-web-app, never user config), mounts the
@@ -155,12 +202,13 @@
     # webserver under /api; browser half is the fetch/SSE client.
     - id: connection
       name: '@deepseek-ai/dsh-client-connection'
-      inject: [webRuntime]
+      inject: [webRuntime, auth]
       config:
         # LAN literals derived from the active bind plus --trusted-host extras.
         # A deployment adding authorities keeps this expression and concatenates
         # its literals, for example: ['app.internal', ...ctx.webRuntime.trustedHosts].
         trustedHosts: !!js ctx.webRuntime.trustedHosts
+        authCookieName: harness_session
 
     - id: api-remotes
       name: '@deepseek-ai/dsh-api-remotes'

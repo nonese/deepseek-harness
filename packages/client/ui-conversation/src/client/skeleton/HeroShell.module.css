@@ -1,4 +1,4 @@
-/* NEW SESSION hero (figma Input_Bottom 75:8208): fish + title, workspace chip
+/* NEW SESSION hero: Harness mark + title, workspace chip
    above the shared InputBar card. The input itself is InputBar — only stack
    geometry and the chip live here. */
 
@@ -23,7 +23,7 @@
   overflow: visible;
 }
 
-/* figma 34:10411: fish + title, gap 10, centered; 26/32 wt500. The preview
+/* Harness initial + title, gap 10, centered; 26/32 wt500. The preview
    badge is a product addition outside that source: a mono superscript pill
    riding the title's top-right. */
 .headline {
@@ -61,39 +61,18 @@
   white-space: nowrap;
 }
 
-/* Keep hover detection on a stationary box while the mark moves within it. */
-.fishHitbox {
+/* Text-only product mark. */
+.brandMark {
   grid-row: 1;
   grid-column: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-}
-
-/* Keep the hero mark in the same primary ink as its headline. */
-.fish {
   color: var(--dsw-alias-label-primary);
-  transform-origin: 50% 60%;
-}
-
-@keyframes hero-fish-swim {
-  0%, 100% {
-    transform: translate(0, 0) rotate(0deg);
-  }
-
-  35% {
-    transform: translate(-1px, -1px) rotate(-5deg);
-  }
-
-  70% {
-    transform: translate(1px, 0) rotate(3deg);
-  }
-}
-
-@media (hover: hover) and (prefers-reduced-motion: no-preference) {
-  .fishHitbox:hover .fish {
-    animation: hero-fish-swim var(--ds-transition-duration-slow) var(--ds-ease-in-out);
-  }
+  font-family: var(--ds-font-family-code);
+  font-size: 28px;
+  line-height: 1;
+  font-weight: 700;
 }
 
 /* Workspace row sits 12px above the input card (figma y80 → y112). The blue

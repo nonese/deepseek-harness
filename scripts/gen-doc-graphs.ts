@@ -189,6 +189,15 @@ const SERVICE_ROLES: ServiceRole[] = [
     note: 'Configuration carries references to secrets; providers own the values. Consumers resolve per operation, so a rotated credential reaches the very next request; the web gateway exposes value-free views and write-only storage.',
   },
   {
+    key: 'auth',
+    pkg: 'auth',
+    title: 'Server authentication and user ownership seam',
+    mode: 'seam',
+    implementations: ['auth-file'],
+    consumers: ['auth-web'],
+    note: 'The provider owns public user records, local password verifiers, revocable browser sessions, and stable program-managed per-user path roles; transports authenticate before constructing a user-scoped API view.',
+  },
+  {
     key: 'sessionTelemetry',
     pkg: 'session-telemetry',
     title: 'Session telemetry seam',

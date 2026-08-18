@@ -11,10 +11,18 @@
 import { useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import type { KernelSignal, LoaderStatus } from './loader-status.ts'
+import type { ClientAuthState } from './auth-state.ts'
+import { LoginPage } from './LoginPage.tsx'
 import css from './AppRoot.module.css'
 
 /** AppRoot props: settled signal, fiber-state projection feed, boot failure report, deferred real-UI factory. */
 export interface AppRootProps {
+  /** Authentication preflight. Plugin boot never starts from the anonymous arm. */
+  auth: KernelSignal<ClientAuthState>
+  /** Verify local credentials and continue boot. */
+  onLocalLogin(username: string, password: string): Promise<void>
+  /** Start the deployment-owned OIDC flow, or surface its not-configured state. */
+  onOidcLogin(): void
   /** True once the boot chain settled (loader quiesced + all entries ACTIVE); the boot closure flips it. */
   settled: KernelSignal<boolean>
   /** Per-entry fiber-state projection store (drives loading/failed rendering). */
@@ -27,12 +35,25 @@ export interface AppRootProps {
 
 /** Boot gate: loading page until the boot settles; failures stay here. */
 export function AppRoot(props: AppRootProps) {
+  const auth = useSyncExternalStore(props.auth.subscribe, props.auth.getSnapshot)
   const settled = useSyncExternalStore(props.settled.subscribe, props.settled.getSnapshot)
   const status = useSyncExternalStore(props.status.subscribe, props.status.getSnapshot)
   const error = useSyncExternalStore(props.error.subscribe, props.error.getSnapshot)
   const failed = Object.entries(status).filter(([, s]) => s === 'failed')
 
-  if (settled) return <>{props.renderApp()}</>
+  if (auth.phase === 'anonymous') {
+    return (
+      <LoginPage
+        key={auth.message ?? 'login'}
+        oidcConfigured={auth.oidcConfigured}
+        {...auth.message === undefined ? {} : { initialMessage: auth.message }}
+        onLocalLogin={(username, password) => props.onLocalLogin(username, password)}
+        onOidcLogin={() => { props.onOidcLogin() }}
+      />
+    )
+  }
+
+  if (auth.phase === 'authenticated' && settled) return <>{props.renderApp()}</>
 
   const loud = error !== undefined || failed.length > 0
 
@@ -44,7 +65,7 @@ export function AppRoot(props: AppRootProps) {
           ? (
             <>
               <div className={css.spinner} />
-              <div className={css.hint}>Loading plugins…</div>
+              <div className={css.hint}>{auth.phase === 'checking' ? '正在验证身份…' : '正在加载工作空间…'}</div>
             </>
           )
           : (

@@ -9,6 +9,8 @@
 
 export { AppWebEntry, type BootSeams } from './boot.tsx'
 export { AppRoot, type AppRootProps } from './AppRoot.tsx'
+export { HarnessPortal, type HarnessPortalProps } from './HarnessPortal.tsx'
+export { LoginPage, type LoginPageProps } from './LoginPage.tsx'
 export { buildRenderApp, type AssemblyDeps } from './app.tsx'
 export { DocumentTitle, type DocumentTitleProps } from './DocumentTitle.tsx'
 export { APP_SHELL_ID, type AppShellService } from './app-shell.ts'

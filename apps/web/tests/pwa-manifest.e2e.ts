@@ -12,24 +12,14 @@ it('ships install metadata with the built web application', async () => {
   const manifest: unknown = JSON.parse(await readFile(join(DIST_ROOT, 'manifest.webmanifest'), 'utf8'))
   expect(manifest).toEqual({
     id: '/',
-    name: 'DeepSeek Harness',
-    short_name: 'DSH',
+    name: 'Harness',
+    short_name: 'Harness',
     start_url: '/',
     scope: '/',
     display: 'fullscreen',
-    icons: [{
-      src: '/favicon.svg',
-      sizes: 'any',
-      type: 'image/svg+xml',
-      purpose: 'any',
-    }],
   })
 })
 
-it('ships a favicon that switches to a light mark under dark color scheme', async () => {
-  const favicon = await readFile(join(DIST_ROOT, 'favicon.svg'), 'utf8')
-  // The light fill must live inside the dark-scheme media query, so the icon
-  // stays black in light mode and only turns white under a dark scheme.
-  expect(favicon).toMatch(/@media \(prefers-color-scheme: dark\)\s*{\s*path\s*{[^}]*fill:\s*#fff/i)
-  expect(favicon).toContain('fill="#000"')
+it('does not ship the former vendor logo as a favicon', async () => {
+  expect(await readFile(join(DIST_ROOT, 'index.html'), 'utf8')).not.toContain('favicon.svg')
 })

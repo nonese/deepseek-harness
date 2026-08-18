@@ -342,6 +342,26 @@ export interface Config {
 
 来源：[`packages/attachment/attachment-local/src/index.ts:24`](../packages/attachment/attachment-local/src/index.ts)
 
+<a id="deepseek-aidsh-auth-file"></a>
+
+## `@deepseek-ai/dsh-auth-file`
+
+```ts config-catalog
+/** File-provider configuration. */
+export interface Config {
+  /** Server data root. Defaults to `<DSH_HOME>/server`. */
+  root?: string
+  /** Local browser-session lifetime. Defaults to 12 hours. */
+  sessionTtlHours?: number
+  /** Initial administrator username when the user file is absent. */
+  bootstrapUsername?: string
+  /** Environment variable carrying the initial administrator password. */
+  bootstrapPasswordEnv?: string
+}
+```
+
+来源：[`packages/identity/auth-file/src/index.ts:89`](../packages/identity/auth-file/src/index.ts)
+
 <a id="deepseek-aidsh-bash-local"></a>
 
 ## `@deepseek-ai/dsh-bash-local`
@@ -409,16 +429,18 @@ export interface ConnectionConfig {
   trustedHosts?: string[]
   /** Maximum buffered JSON body for every `/api` request. */
   maxRequestBodyBytes?: number
+  /** Authentication cookie name shared with the browser auth routes. */
+  authCookieName?: string
 }
 ```
 
-来源：[`packages/client/connection/src/index.ts:50`](../packages/client/connection/src/index.ts)
+来源：[`packages/client/connection/src/index.ts:51`](../packages/client/connection/src/index.ts)
 
 <a id="deepseek-aidsh-client-hmr"></a>
 
 ## `@deepseek-ai/dsh-client-hmr`
 
-需要：`clientModuleHost` · `webServer`
+需要：`clientModules` · `webServer`
 
 ```ts config-catalog
 /** Plugin config, validated by the same-named schemastery schema. */
@@ -662,7 +684,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-hooks-claude-code`
 
-需要：`bash`
+需要：`shell`
 
 ```ts config-catalog
 /** Plugin config: where the CC hook config lives + substitution roots. */
@@ -700,7 +722,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-hooks-codex`
 
-需要：`bash`
+需要：`shell`
 
 ```ts config-catalog
 /** Plugin config: where the Codex hooks.json lives + the model name for payloads. */
@@ -727,7 +749,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-host-apiproxy`
 
-需要：`agentDefaultModel` · `agents` · `attachments` · `directoryPicker` · `llm` · `sessions` · `subagents` · `sessionQuery` · `tools` · `userInteraction` · `workspace`
+需要：`agentDefaultModel` · `agents` · `attachments` · `directoryPicker` · `llm` · `sessions` · `subagents` · `sessionQuery` · `tools` · `userQuestions` · `workspaceRegistry`
 
 ```ts config-catalog
 /** Gateway plugin configuration. */
@@ -755,7 +777,27 @@ export interface Config {
 }
 ```
 
-来源：[`packages/host/apiproxy/src/index.ts:41`](../packages/host/apiproxy/src/index.ts)
+来源：[`packages/host/apiproxy/src/index.ts:45`](../packages/host/apiproxy/src/index.ts)
+
+<a id="deepseek-aidsh-host-auth-web"></a>
+
+## `@deepseek-ai/dsh-host-auth-web`
+
+需要：`auth` · `credentials` · `sessions` · `webServer` · `workspaceRegistry`
+
+```ts config-catalog
+/** Browser authentication route configuration. */
+export interface Config {
+  /** Cookie name. Defaults to `harness_session`. */
+  cookieName?: string
+  /** Add the Secure cookie attribute. Enable when the public origin is HTTPS. */
+  secureCookie?: boolean
+  /** Maximum JSON request body. Defaults to 64 KiB. */
+  maxBodyBytes?: number
+}
+```
+
+来源：[`packages/host/auth-web/src/index.ts:41`](../packages/host/auth-web/src/index.ts)
 
 <a id="deepseek-aidsh-host-directory-picker-browse"></a>
 
@@ -891,7 +933,7 @@ export interface DeepSeekCatalogModel {
 
 依赖：[`RetryPolicyConfig`](../packages/llm/llm/src/index.ts)
 
-来源：[`packages/llm/llm-deepseek/src/index.ts:62`](../packages/llm/llm-deepseek/src/index.ts)
+来源：[`packages/llm/llm-deepseek/src/index.ts:68`](../packages/llm/llm-deepseek/src/index.ts)
 
 <a id="deepseek-aidsh-llm-pi-ai"></a>
 
@@ -1299,7 +1341,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-permission-presets`
 
-需要：`bash` · `approval` · `sessions`
+需要：`shell` · `approval` · `sessions`
 
 ```ts config-catalog
 /** The {@link PermissionPresetService} config: preset table and composition default. */
@@ -1515,12 +1557,18 @@ export interface Config {
    * `process.cwd()`). Normal agent calls use their session cwd instead.
    */
   workspaceRoot?: string
+  /** Deployment ceiling; calls and persisted session overrides cannot exceed it. */
+  maximumMode?: SandboxMode
+  /** Host-private tree hidden from confined subprocesses (for example `$DSH_HOME`). */
+  privateRoot?: string
+  /** Parent whose direct children are authenticated user roots. Requires `privateRoot`. */
+  accessRootParent?: string
 }
 ```
 
 依赖：[`SandboxMode`](subsystems/sandbox.md)
 
-来源：[`packages/sandbox/sandbox-policy/src/index.ts:67`](../packages/sandbox/sandbox-policy/src/index.ts)
+来源：[`packages/sandbox/sandbox-policy/src/index.ts:116`](../packages/sandbox/sandbox-policy/src/index.ts)
 
 <a id="deepseek-aidsh-sdk-jsonrpc-server"></a>
 
@@ -1544,7 +1592,7 @@ export interface JsonRpcConfig {
 
 依赖：`Readable`（`node:stream`）· `Writable`（`node:stream`）
 
-来源：[`packages/sdk/server/src/index.ts:29`](../packages/sdk/server/src/index.ts)
+来源：[`packages/sdk/server/src/index.ts:25`](../packages/sdk/server/src/index.ts)
 
 <a id="deepseek-aidsh-session-persistence-jsonl"></a>
 
@@ -2250,7 +2298,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-terminal-bash`
 
-需要：`pty` · `sandboxPolicy` · `subprocess`
+需要：`terminals` · `sandboxPolicy` · `subprocess`
 
 ```ts config-catalog
 /** Public plugin configuration. */
@@ -2340,7 +2388,7 @@ export type TokenMeterConfig = Record<string, never>
 
 ## `@deepseek-ai/dsh-tool-bash`
 
-需要：`tools` · `bash` · `systemPrompt` · `bashEnv`
+需要：`tools` · `shell` · `systemPrompt` · `shellEnv`
 
 ```ts config-catalog
 /** Configuration for the bash tool. */
@@ -2356,7 +2404,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-tool-bash-persistent`
 
-需要：`tools` · `pty`
+需要：`tools` · `terminals`
 
 ```ts config-catalog
 /** Configuration for the persistent Bash tool. */
@@ -2451,7 +2499,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-tool-jobs`
 
-需要：`tools` · `tasks` · `systemPrompt`
+需要：`tools` · `jobs` · `systemPrompt`
 
 ```ts config-catalog
 /** Configures bounded `job_output` waits and completion-notice delivery. */
@@ -2505,7 +2553,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-tool-pwsh`
 
-需要：`tools` · `bash` · `systemPrompt` · `bashEnv`
+需要：`tools` · `shell` · `systemPrompt` · `shellEnv`
 
 ```ts config-catalog
 /** Configuration for the pwsh tool. */
@@ -2521,7 +2569,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-tool-ralph`
 
-需要：`tools` · `workflows` · `subagents` · `systemPrompt`
+需要：`tools` · `workflowEngine` · `subagents` · `systemPrompt`
 
 ```ts config-catalog
 /** Deployment policy for the fixed Ralph workflow. */
@@ -2589,7 +2637,7 @@ export interface Config {
 }
 ```
 
-来源：[`packages/fs/tool-str-replace-editor/src/index.ts:497`](../packages/fs/tool-str-replace-editor/src/index.ts)
+来源：[`packages/fs/tool-str-replace-editor/src/index.ts:507`](../packages/fs/tool-str-replace-editor/src/index.ts)
 
 <a id="deepseek-aidsh-tool-subagent"></a>
 
@@ -2682,7 +2730,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-tool-terminal`
 
-需要：`pty` · `tools` · `systemPrompt`
+需要：`terminals` · `tools` · `systemPrompt`
 
 ```ts config-catalog
 /** Model-facing terminal tool configuration. */
@@ -2748,7 +2796,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-tool-workflow`
 
-需要：`tools` · `workflows` · `systemPrompt`
+需要：`tools` · `workflowEngine` · `systemPrompt`
 
 ```ts config-catalog
 /** Config: the model-facing tool name plus result rendering caps. */
@@ -3098,6 +3146,7 @@ export interface Config {
 抽象服务类——部署时应改为加载具体的实现包（参见[能力 seam](../.agents/notes/implemented/architecture/2026-06-13-capability-seams.md)）。
 
 - `@deepseek-ai/dsh-attachment` — 抽象 `AttachmentStore`（[`packages/attachment/attachment/src/index.ts`](../packages/attachment/attachment/src/index.ts)）
+- `@deepseek-ai/dsh-auth` — 抽象 `AuthService`（[`packages/identity/auth/src/index.ts`](../packages/identity/auth/src/index.ts)）
 - `@deepseek-ai/dsh-code-runtime` — 抽象 `CodeRuntime`（[`packages/code-runtime/code-runtime/src/index.ts`](../packages/code-runtime/code-runtime/src/index.ts)）
 - `@deepseek-ai/dsh-compaction` — 抽象 `CompactionEngine`（[`packages/compaction/compaction/src/index.ts`](../packages/compaction/compaction/src/index.ts)）
 - `@deepseek-ai/dsh-credentials` — 抽象 `Credentials`（[`packages/credentials/credentials/src/index.ts`](../packages/credentials/credentials/src/index.ts)）

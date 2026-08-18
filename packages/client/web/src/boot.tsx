@@ -43,6 +43,13 @@ import {
 import * as AppShell from './app-shell.ts'
 import { APP_SHELL_ID } from './app-shell.ts'
 import { AppRoot } from './AppRoot.tsx'
+import { HarnessPortal } from './HarnessPortal.tsx'
+import {
+  isClientAuthSession,
+  type ClientAuthSession,
+  type ClientAuthState,
+  type ClientAuthUser,
+} from './auth-state.ts'
 import { getStaticModules } from './seed.ts'
 import { STATE_LABELS, createLoaderStatusStore, createSignal } from './loader-status.ts'
 import './base.css'
@@ -69,6 +76,7 @@ export class AppWebEntry {
   private readonly el: HTMLElement
   private readonly seams: BootSeams | undefined
   private readonly status = createLoaderStatusStore()
+  private readonly auth = createSignal<ClientAuthState>({ phase: 'checking' })
   private readonly settled = createSignal(false)
   private readonly error = createSignal<string | undefined>(undefined)
   // Assigned by run() before any private method or settled-gated closure reads them.
@@ -76,6 +84,7 @@ export class AppWebEntry {
   private modules!: ClientModuleSystem
   private manifest!: BootManifest
   private root: Root | undefined
+  private pluginBoot: Promise<void> | undefined
 
   /**
    * Hold the mount point; all work happens in {@link run}.
@@ -95,25 +104,17 @@ export class AppWebEntry {
    * @returns resolves once the UI settled or the failure report rendered.
    */
   async run(): Promise<void> {
-    this.manifest = parseBootManifest((globalThis as DshWindow).__DSH_BOOT__)
-
-    this.modules = new ClientModuleSystem({
-      modules: this.manifest.modules, staticModules: getStaticModules(), ...this.seams,
-    })
-    // The app-shell assembly is the only shell-own module: every other graph
-    // row is a plugin bundle arriving through fetch.
-    this.modules.registerStatic(APP_SHELL_ID, AppShell)
-    // Adoption handoff, supply side: register the modules
-    // package's own client half under its bare package name (= graph row id
-    // = entry name — a suffixed key would miss the statics branch and
-    // trigger a real fetch), and put the instance on the kernel slot the
-    // wrapper's apply reads to provide ctx.modules.
-    this.modules.registerStatic(MODULES_ID, ModulesClient)
-    ;(globalThis as DshWindow).__DSH_MODULES__ = this.modules
-
     this.root = createRoot(this.el)
     this.root.render(
       <AppRoot
+        auth={this.auth}
+        onLocalLogin={(username, password) => this.loginLocal(username, password)}
+        onOidcLogin={() => {
+          const current = this.auth.getSnapshot()
+          if (current.phase === 'anonymous' && current.oidcConfigured && typeof location !== 'undefined') {
+            location.assign('/auth/oidc/start')
+          }
+        }}
         settled={this.settled}
         status={this.status}
         error={this.error}
@@ -121,10 +122,43 @@ export class AppWebEntry {
           const shell = this.ctx.get('appShell')
           // Unreachable after a clean settle (the app-shell entry is in every graph).
           if (shell === undefined) throw new Error('web boot: appShell service missing after settled')
-          return shell.renderApp()
+          const authenticated = this.auth.getSnapshot()
+          if (authenticated.phase !== 'authenticated') return null
+          const workspaces = this.ctx.get('workspaces') as unknown as {
+            startSession(workspaceId?: never): void
+          }
+          return (
+            <HarnessPortal
+              user={authenticated.user}
+              renderRuntime={() => shell.renderApp()}
+              openWorkspace={(workspaceId) => { workspaces.startSession(workspaceId as never) }}
+              startSession={(workspaceId) => { workspaces.startSession(workspaceId as never) }}
+              onLogout={() => this.logout()}
+            />
+          )
         }}
       />,
     )
+
+    const authenticated = await this.checkAuthentication()
+    if (authenticated) await this.startPluginBoot()
+  }
+
+  private async startPluginBoot(): Promise<void> {
+    if (this.pluginBoot !== undefined) return this.pluginBoot
+    this.pluginBoot = this.runAuthenticatedBoot()
+    return this.pluginBoot
+  }
+
+  private async runAuthenticatedBoot(): Promise<void> {
+    this.manifest = parseBootManifest((globalThis as DshWindow).__DSH_BOOT__)
+
+    this.modules = new ClientModuleSystem({
+      modules: this.manifest.modules, staticModules: getStaticModules(), ...this.seams,
+    })
+    this.modules.registerStatic(APP_SHELL_ID, AppShell)
+    this.modules.registerStatic(MODULES_ID, ModulesClient)
+    ;(globalThis as DshWindow).__DSH_MODULES__ = this.modules
 
     // The immediately tier prefetches in parallel with Loader mounting;
     // runPluginBoot awaits it before creating entries (see module comment:
@@ -140,6 +174,75 @@ export class AppWebEntry {
       console.error(reason)
       this.error.set(reason instanceof Error ? reason.message : String(reason))
     }
+  }
+
+  private async checkAuthentication(): Promise<boolean> {
+    if (typeof location !== 'undefined' && new URLSearchParams(location.search).has('fixture')) {
+      const user: ClientAuthUser = {
+        id: 'fixture-user', username: 'fixture', displayName: '测试用户', role: 'user',
+        status: 'active', authMethods: ['local'], createdAt: new Date(0).toISOString(),
+      }
+      this.auth.set({ phase: 'authenticated', user, method: 'local', expiresAt: new Date(8.64e15).toISOString() })
+      return true
+    }
+    try {
+      const response = await fetch('/auth/session', { credentials: 'same-origin' })
+      if (!response.ok) throw new Error(`认证服务返回 ${String(response.status)}`)
+      const body: unknown = await response.json()
+      const shape = body as { authenticated?: unknown; oidc?: { configured?: unknown } }
+      if (shape.authenticated === true && isClientAuthSession(body)) {
+        this.auth.set({ phase: 'authenticated', user: body.user, expiresAt: body.expiresAt, method: body.method })
+        return true
+      }
+      const oidcError = typeof location === 'undefined'
+        ? undefined
+        : new URLSearchParams(location.search).get('oidc_error') ?? undefined
+      const oidcMessages: Record<string, string> = {
+        access_denied: '企业登录已取消，请重试或使用本地账号。',
+        busy: '当前企业登录请求较多，请稍后重试。',
+        configuration_changed: '管理员刚刚更新了 OIDC 配置，请重新登录。',
+        flow_expired: '企业登录已过期，请重新发起登录。',
+        login_failed: '企业身份校验失败，请重试或使用本地账号。',
+        unavailable: '暂时无法连接企业登录服务，请联系管理员或使用本地账号。',
+      }
+      this.auth.set({
+        phase: 'anonymous',
+        oidcConfigured: shape.oidc?.configured === true,
+        ...oidcError === undefined ? {} : { message: oidcMessages[oidcError] ?? '企业登录失败，请重试。' },
+      })
+      return false
+    } catch (reason) {
+      this.auth.set({
+        phase: 'anonymous',
+        oidcConfigured: false,
+        message: `无法连接认证服务：${reason instanceof Error ? reason.message : String(reason)}`,
+      })
+      return false
+    }
+  }
+
+  private async loginLocal(username: string, password: string): Promise<void> {
+    const response = await fetch('/auth/login/local', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    })
+    const body: unknown = await response.json().catch(() => ({}))
+    if (!response.ok || !isClientAuthSession(body)) {
+      const message = (body as { error?: { message?: string } }).error?.message ?? '登录失败'
+      throw new Error(message)
+    }
+    const session: ClientAuthSession = body
+    this.auth.set({ phase: 'authenticated', user: session.user, expiresAt: session.expiresAt, method: session.method })
+    await this.startPluginBoot()
+  }
+
+  private async logout(): Promise<void> {
+    await fetch('/auth/logout', {
+      method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: '{}',
+    })
+    if (typeof location !== 'undefined') location.reload()
   }
 
   /** Unmount the shell (loading page or settled UI). */

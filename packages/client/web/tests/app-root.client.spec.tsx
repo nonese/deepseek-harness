@@ -12,22 +12,34 @@ import { act, cleanup, render } from '@testing-library/react'
 
 afterEach(cleanup)
 import { AppRoot } from '@deepseek-ai/dsh-client-web/src/AppRoot.tsx'
+import type { ClientAuthState } from '@deepseek-ai/dsh-client-web/src/auth-state.ts'
 import { createLoaderStatusStore, createSignal } from '@deepseek-ai/dsh-client-web/src/loader-status.ts'
 
 function mount() {
+  const auth = createSignal<ClientAuthState>({
+    phase: 'authenticated' as const,
+    user: {
+      id: 'user-1', username: 'user', displayName: '用户', role: 'user' as const,
+      status: 'active' as const, authMethods: ['local' as const], createdAt: new Date(0).toISOString(),
+    },
+    expiresAt: new Date(1).toISOString(), method: 'local' as const,
+  })
   const settled = createSignal(false)
   const error = createSignal<string | undefined>(undefined)
   const status = createLoaderStatusStore()
   let renders = 0
   const utils = render(
     <AppRoot
+      auth={auth}
+      onLocalLogin={() => Promise.resolve()}
+      onOidcLogin={() => {}}
       settled={settled}
       status={status}
       error={error}
       renderApp={() => { renders += 1; return <div data-testid="real-ui" /> }}
     />,
   )
-  return { settled, status, error, counts: () => renders, ...utils }
+  return { auth, settled, status, error, counts: () => renders, ...utils }
 }
 
 describe('AppRoot', () => {
@@ -72,5 +84,18 @@ describe('AppRoot', () => {
     expect(getByTestId('real-ui')).toBeTruthy()
     expect(queryByText('HARNESS')).toBeNull()
     expect(counts()).toBe(1)
+  })
+
+  it('shows login and keeps the plugin UI closed while anonymous', () => {
+    const { auth, container, getByText, queryByTestId } = mount()
+    act(() => { auth.set({ phase: 'anonymous', oidcConfigured: false }) })
+    expect(getByText('登录你的工作空间')).toBeTruthy()
+    const hero = container.querySelector('img[src="/assets/harness-login-hero.webp"]')
+    expect(hero).toBeTruthy()
+    expect(hero?.getAttribute('alt')).toBe('')
+    const whaleMark = container.querySelector('img[src="/assets/harness-whale-mark.webp"]')
+    expect(whaleMark).toBeTruthy()
+    expect(whaleMark?.getAttribute('alt')).toBe('')
+    expect(queryByTestId('real-ui')).toBeNull()
   })
 })

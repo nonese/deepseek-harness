@@ -2,6 +2,9 @@
   "files": [],
   "references": [
     {
+      "path": "../../identity/auth"
+    },
+    {
       "path": "./tsconfig.host.json"
     },
     {

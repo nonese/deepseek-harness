@@ -5,6 +5,7 @@
  */
 
 import { grantArgs as landlockGrantArgs } from '@deepseek-ai/node-addon-landlock-run'
+import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { writableRoots } from '@deepseek-ai/dsh-sandbox'
 import type { SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
 
@@ -17,7 +18,27 @@ export function bwrapProfileArgs(policy: SandboxPolicy): string[] {
   const args = ['--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--die-with-parent']
   if (policy.mode === 'workspace-write') {
     args.push('--tmpfs', '/tmp')
+  }
+  if (policy.privateRoot !== undefined) {
+    args.push('--tmpfs', policy.privateRoot)
+    if (policy.readableRoot !== undefined) {
+      const path = relative(policy.privateRoot, policy.readableRoot)
+      if (path === '' || path === '..' || path.startsWith(`..${sep}`) || isAbsolute(path)) {
+        throw new Error('sandbox-local: readableRoot must be a descendant of privateRoot')
+      }
+      let mountpoint = policy.privateRoot
+      for (const segment of path.split(sep)) {
+        mountpoint = resolve(mountpoint, segment)
+        args.push('--dir', mountpoint)
+      }
+      args.push('--ro-bind', policy.readableRoot, policy.readableRoot)
+    }
+  }
+  if (policy.mode === 'workspace-write') {
     args.push('--bind', policy.workspaceRoot, policy.workspaceRoot)
+  }
+  if (policy.privateRoot !== undefined) {
+    args.push('--remount-ro', policy.privateRoot)
   }
   return args
 }
@@ -50,6 +71,12 @@ function sbplString(path: string): string {
  */
 export function seatbeltProfileArgs(policy: SandboxPolicy): string[] {
   const forms = ['(version 1)', '(allow default)', '(deny file-write*)', `(allow file-write* (literal ${sbplString('/dev/null')}))`]
+  if (policy.privateRoot !== undefined) {
+    forms.push(`(deny file-read* (subpath ${sbplString(policy.privateRoot)}))`)
+    if (policy.readableRoot !== undefined) {
+      forms.push(`(allow file-read* (subpath ${sbplString(policy.readableRoot)}))`)
+    }
+  }
   const roots = writableRoots(policy)
   if (roots.length > 0) {
     forms.push(`(allow file-write* ${roots.map(root => `(subpath ${sbplString(root)})`).join(' ')})`)

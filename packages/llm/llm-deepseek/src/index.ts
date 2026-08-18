@@ -14,8 +14,10 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { assertUsableApiKey, LlmError, resolveRetryPolicy, RetryPolicySchema } from '@deepseek-ai/dsh-llm'
-import type { RetryPolicyConfig } from '@deepseek-ai/dsh-llm'
+import type { GenerateOptions, RetryPolicyConfig } from '@deepseek-ai/dsh-llm'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
+import type {} from '@deepseek-ai/dsh-auth'
+import type {} from '@deepseek-ai/dsh-session'
 import { launchEnvironmentOf, type LaunchEnvironmentSnapshot } from '@deepseek-ai/dsh-launch-environment'
 import { deepEqualJson, installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
@@ -44,7 +46,11 @@ export const inject = ['llm']
 const NS = settingsNamespace('llm-deepseek')
 const DEFAULT_API_KEY_ENV = 'DEEPSEEK_API_KEY'
 /** The single provider route this plugin owns. */
-const PROVIDER = 'deepseek-official'
+export const PROVIDER = 'deepseek-official'
+/** Model eligible for the administrator-managed credential in server deployments. */
+export const SHARED_DEEPSEEK_MODEL = 'deepseek-v4-flash'
+/** Dedicated credential reference for the administrator-managed DeepSeek key. */
+export const SHARED_DEEPSEEK_API_KEY_ENV = 'HARNESS_SHARED_DEEPSEEK_API_KEY'
 
 const DEFAULT_MODELS: DeepSeekCatalogModel[] = [
   { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', contextWindow: DEFAULT_CONTEXT_WINDOW },
@@ -222,11 +228,38 @@ export function apply(ctx: Context, config: Config): void {
   }
   options()
 
-  const resolveApiKey = async (connection: ResolvedDeepSeekOptions): Promise<string> => {
+  const resolveApiKey = async (
+    connection: ResolvedDeepSeekOptions,
+    request: GenerateOptions,
+  ): Promise<string> => {
     // Every credential fact comes from the caller's snapshot, so a rejected
     // settings generation cannot leak its key onto the previous endpoint.
     const ref = connection.apiKeyEnv
     const credentials = ctx.get('credentials')
+    const auth = ctx.get('auth')
+    const sessions = ctx.get('sessions')
+    if (request.provider === PROVIDER
+      && request.model === SHARED_DEEPSEEK_MODEL
+      && request.sessionId !== undefined
+      && auth !== undefined
+      && sessions !== undefined) {
+      const cwd = sessions.get(request.sessionId)?.header.cwd
+      const owner = cwd === undefined ? undefined : auth.ownerForProjectPath(cwd)
+      if (owner?.status === 'active' && auth.sharedDeepSeekPreference(owner.id).enabled) {
+        if (credentials === undefined) {
+          throw new LlmError('llm-deepseek: the managed DeepSeek credential store is unavailable', 'MISSING_CREDENTIAL')
+        }
+        const sharedRef = credentialRef(SHARED_DEEPSEEK_API_KEY_ENV)
+        const shared = await credentials.resolve(sharedRef)
+        if (shared === undefined) {
+          throw new LlmError(
+            'llm-deepseek: the administrator-managed DeepSeek credential is not configured',
+            'MISSING_CREDENTIAL',
+          )
+        }
+        return assertUsableApiKey(shared.value, 'llm-deepseek', sharedRef)
+      }
+    }
     if (credentials !== undefined) {
       const hit = await credentials.resolve(ref)
       if (hit !== undefined) return assertUsableApiKey(hit.value, 'llm-deepseek', ref)

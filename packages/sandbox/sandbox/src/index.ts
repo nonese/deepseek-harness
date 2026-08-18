@@ -42,6 +42,17 @@ export interface SandboxExecutionPolicy {
   /** Absolute root directory `workspace-write` may write under. */
   workspaceRoot: string
   /**
+   * Optional deployment-private tree that confined child processes must hide.
+   * When present, the provider exposes only {@link readableRoot} from inside
+   * this tree. This is a read-isolation boundary, not another writable grant.
+   */
+  privateRoot?: string
+  /**
+   * The authenticated caller's readable slice of {@link privateRoot}. Model
+   * filesystem tools enforce the same slice before reading or searching.
+   */
+  readableRoot?: string
+  /**
    * Opaque identity of the calling session (the branded `dsh-session`
    * SessionId). Backends key per-session state off it (e.g. windows-acl gives
    * each live session/workspace pair a random private temp directory and SID,

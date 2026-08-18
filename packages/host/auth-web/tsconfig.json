@@ -1,0 +1,18 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": { "rootDir": "src", "outDir": "lib/types" },
+  "include": ["src"],
+  "references": [
+    { "path": "../../../vendor/cordis" },
+    { "path": "../../../vendor/schemastery" },
+    { "path": "../../identity/auth" },
+    { "path": "../../credentials/credentials" },
+    { "path": "../../llm/llm" },
+    { "path": "../../llm/llm-deepseek" },
+    { "path": "../webserver" },
+    { "path": "../../core/session" },
+    { "path": "../../core/tools" },
+    { "path": "../../workspace/workspace" },
+    { "path": "../../runtime-diagnostics/invariants" }
+  ]
+}

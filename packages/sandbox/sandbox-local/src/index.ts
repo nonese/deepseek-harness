@@ -334,6 +334,12 @@ export class LocalSandboxProvider extends SandboxProvider {
 
   /** The selected rung's runner invocation (program + profile arguments) for one policy. */
   private runnerArgv(runner: SelectedRunner['runner'], policy: SandboxPolicy): string[] {
+    if (policy.privateRoot !== undefined && (runner === 'landlock' || runner === 'windows-acl')) {
+      throw new SandboxUnavailableError(
+        policy.mode,
+        `${runner} cannot enforce the deployment's private read-isolation root; use bubblewrap on Linux or Seatbelt on macOS`,
+      )
+    }
     switch (runner) {
       case 'bwrap': return ['bwrap', ...bwrapProfileArgs(policy)]
       case 'landlock': return [this.landlockLauncher(), ...landlockProfileArgs(policy)]

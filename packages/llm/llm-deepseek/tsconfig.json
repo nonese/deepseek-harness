@@ -37,6 +37,12 @@
     },
     {
       "path": "../../identity/anonymous-user-id"
+    },
+    {
+      "path": "../../identity/auth"
+    },
+    {
+      "path": "../../core/session"
     }
   ]
 }

@@ -134,6 +134,8 @@ const SENTENCE_MODEL_EXPERIENCE: Readonly<Record<string, SentenceContract>> = {
   'packages/session/session-telemetry': { kind: 'none', reason: 'The seam observes the session stream and hands redacted copies outward; it registers nothing model-facing.' },
   'packages/session/session-telemetry-otel': { kind: 'none', reason: 'The backend forwards seam records into the OTel SDK pipeline and registers nothing model-facing.' },
   'packages/identity/anonymous-user-id': { kind: 'none', reason: 'The shared identifier reaches DeepSeek only as model-hidden HTTP metadata; it registers nothing model-facing.' },
+  'packages/identity/auth': { kind: 'none', reason: 'The authentication seam controls user access and directories but contributes no model-visible content.' },
+  'packages/identity/auth-file': { kind: 'none', reason: 'The file provider stores authentication records and contributes no model-visible content.' },
   'packages/skill/skill': { kind: 'indirect', reason: 'The provider registry delegates model rendering to dsh-tool-skill.' },
   'packages/skill/skill-badge': { kind: 'indirect', reason: 'The bundled provider delegates model rendering to dsh-tool-skill.' },
   'packages/skill/skill-filesystem': { kind: 'indirect', reason: 'The provider backend delegates model rendering to dsh-tool-skill.' },

@@ -7,6 +7,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { FsError } from '@deepseek-ai/dsh-fs'
 import type { FsInfo, FsTarget } from '@deepseek-ai/dsh-fs'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
+import type {} from '@deepseek-ai/dsh-sandbox-policy'
 import { sessionResolveOptions } from './session-cwd.ts'
 
 /**
@@ -22,6 +23,15 @@ export async function resolveRegularReadTarget(
   requestedPath: string,
 ): Promise<{ target: FsTarget; info: FsInfo }> {
   const target = await ctx.fs.resolve(requestedPath, sessionResolveOptions(exec, requestedPath))
+  const policy = ctx.get('sandboxPolicy')?.resolve({
+    ...exec.agent === undefined ? {} : { session: exec.agent.session },
+  })
+  if (policy?.readableRoot !== undefined) {
+    const root = await ctx.fs.resolve(policy.readableRoot, { signal: exec.signal })
+    if (!ctx.fs.contains(root, target)) {
+      throw new FsError('file access is outside the authenticated user root', 'FS_SANDBOX_DENIED')
+    }
+  }
   const info = await ctx.fs.stat(target, exec.signal)
   if (info === undefined) {
     ctx.emit('fs/observed', target, { kind: 'absent' }, exec)
