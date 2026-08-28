@@ -29,6 +29,7 @@ export function canonicalManagedPath(path: string): string {
       return resolve(realpathSync.native(current), ...missing.reverse())
     } catch {
       const parent = dirname(current)
+      /* v8 ignore next -- every supported platform exposes a resolvable filesystem root. */
       if (parent === current) return resolve(path)
       missing.push(basename(current))
       current = parent

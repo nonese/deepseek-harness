@@ -56,6 +56,10 @@ function fixture(): {
   alice: UserPaths
   bob: UserPaths
   optedIn: { value: boolean }
+  credentialConfigured: { value: boolean }
+  liveSessions: Map<string, { header: { cwd?: string } }>
+  workspaces: Map<string, { path: string }>
+  inspectError: { value?: Error }
 } {
   const root = mkdtempSync(join(tmpdir(), 'harness-remote-policy-'))
   roots.push(root)
@@ -65,6 +69,10 @@ function fixture(): {
   mkdirSync(bob.projects, { recursive: true })
   const current = { value: principal(user('alice')) }
   const optedIn = { value: true }
+  const credentialConfigured = { value: true }
+  const liveSessions = new Map<string, { header: { cwd?: string } }>()
+  const workspaces = new Map<string, { path: string }>()
+  const inspectError: { value?: Error } = {}
   const sessions = new Map([
     ['alice-session', { meta: { cwd: join(alice.projects, 'one') } }],
     ['bob-session', { meta: { cwd: join(bob.projects, 'one') } }],
@@ -76,20 +84,31 @@ function fixture(): {
       sharedDeepSeekPreference: () => ({ enabled: optedIn.value }),
     },
     credentials: {
-      describe: () => Promise.resolve({ configured: true }),
+      describe: () => Promise.resolve({ configured: credentialConfigured.value }),
     },
-    sessions: { get: () => undefined },
+    sessions: { get: (id: SessionId) => liveSessions.get(id) },
     sessionController: {
       inspect: (id: SessionId) => {
+        if (inspectError.value !== undefined) return Promise.reject(inspectError.value)
         const hit = sessions.get(id)
         return hit === undefined
           ? Promise.reject(new ApiSessionNotFound())
           : Promise.resolve(hit)
       },
     },
-    workspaceRegistry: { get: () => undefined },
+    workspaceRegistry: { get: (id: string) => workspaces.get(id) },
   } as unknown as Context
-  return { ctx, current, alice, bob, optedIn }
+  return {
+    ctx,
+    current,
+    alice,
+    bob,
+    optedIn,
+    credentialConfigured,
+    liveSessions,
+    workspaces,
+    inspectError,
+  }
 }
 
 function request(namespace: string, method: string, args: Record<string, unknown> = {}) {
@@ -238,5 +257,265 @@ describe('per-user Remote policy', () => {
       },
       { type: 'queue', sessionId: SessionId('alice-session'), items: [] },
     ])
+  })
+
+  it('passes through requests when no authenticated principal is installed', async () => {
+    const { ctx } = fixture()
+    const auth = ctx.auth as unknown as { currentPrincipal: () => AuthPrincipal | undefined }
+    auth.currentPrincipal = () => undefined
+    const policy = userScopedRemotePolicy(ctx)
+    await expect(policy.invoke(
+      request('unscoped', 'method'),
+      () => Promise.resolve('value'),
+    )).resolves.toBe('value')
+
+    const source = (async function *() { yield 'frame' })()
+    await expect(policy.stream(
+      request('unscoped', 'stream'),
+      () => Promise.resolve(source),
+    )).resolves.toBe(source)
+  })
+
+  it('rejects native filesystem access and unscoped ordinary-user endpoints', async () => {
+    const { ctx } = fixture()
+    const policy = userScopedRemotePolicy(ctx)
+    for (const endpoint of [
+      ['directoryPicker', 'pick'],
+      ['directoryPicker', 'list'],
+      ['directoryPicker', 'createDirectory'],
+      ['session', 'openWorkspacePath'],
+    ] as const) {
+      const denied = await failure(policy.invoke(
+        request(endpoint[0], endpoint[1]),
+        () => Promise.resolve(undefined),
+      ))
+      expect(denied.failure.code).toBe('forbidden')
+    }
+    const denied = await failure(policy.invoke(
+      request('pluginInventory', 'mutate'),
+      () => Promise.resolve(undefined),
+    ))
+    expect(denied.failure.code).toBe('forbidden')
+  })
+
+  it('validates managed workspaces, nested identifiers, and live session ownership', async () => {
+    const { ctx, alice, bob, liveSessions, workspaces } = fixture()
+    const policy = userScopedRemotePolicy(ctx)
+    workspaces.set('alice-workspace', { path: join(alice.projects, 'one') })
+    workspaces.set('bob-workspace', { path: join(bob.projects, 'one') })
+    liveSessions.set('live-alice', { header: { cwd: join(alice.projects, 'live') } })
+    liveSessions.set('live-bob', { header: { cwd: join(bob.projects, 'live') } })
+    liveSessions.set('live-no-cwd', { header: {} })
+
+    await expect(policy.invoke(
+      request('workspace', 'create', { request: { path: join(alice.projects, 'new') } }),
+      () => Promise.resolve('created'),
+    )).resolves.toBe('created')
+    for (const args of [
+      { request: {} },
+      { request: { path: join(bob.projects, 'new') } },
+    ]) {
+      expect((await failure(policy.invoke(
+        request('workspace', 'create', args),
+        () => Promise.resolve(undefined),
+      ))).failure.code).toBe('not-found')
+    }
+
+    await expect(policy.invoke(
+      request('session', 'create', { request: { workspaceId: 'alice-workspace' } }),
+      () => Promise.resolve('created'),
+    )).resolves.toBe('created')
+    for (const body of [
+      {},
+      { cwd: join(bob.projects, 'one') },
+      { workspaceId: 'bob-workspace' },
+      { workspaceId: 'missing-workspace' },
+      { cwd: join(alice.projects, 'one'), sessionId: 'bob-session' },
+    ]) {
+      await expect(policy.invoke(
+        request('session', 'create', { request: body }),
+        () => Promise.resolve(undefined),
+      )).rejects.toBeInstanceOf(TypertRemoteFailure)
+    }
+    await expect(policy.invoke(
+      request('session', 'create', { request: [] }),
+      () => Promise.resolve(undefined),
+    )).rejects.toBeInstanceOf(TypertRemoteFailure)
+
+    await expect(policy.invoke(
+      request('session', 'view', { nested: [{ agentId: 'live-alice' }, null, 1] }),
+      () => Promise.resolve('owned'),
+    )).resolves.toBe('owned')
+    for (const id of ['live-bob', 'live-no-cwd']) {
+      expect((await failure(policy.invoke(
+        request('session', 'view', { nested: { childSessionId: id } }),
+        () => Promise.resolve(undefined),
+      ))).failure.code).toBe('not-found')
+    }
+    expect((await failure(policy.invoke(
+      request('workspace', 'read', { payload: { beforeWorkspaceId: 'bob-workspace' } }),
+      () => Promise.resolve(undefined),
+    ))).failure.code).toBe('not-found')
+  })
+
+  it('propagates unexpected session inspection failures', async () => {
+    const { ctx, inspectError } = fixture()
+    inspectError.value = new Error('storage unavailable')
+    await expect(userScopedRemotePolicy(ctx).invoke(
+      request('session', 'view', { request: { sessionId: 'unknown' } }),
+      () => Promise.resolve(undefined),
+    )).rejects.toThrow('storage unavailable')
+  })
+
+  it('projects session search and all configurable-provider variants', async () => {
+    const { ctx, credentialConfigured, optedIn } = fixture()
+    const policy = userScopedRemotePolicy(ctx)
+    const search = {
+      items: [
+        { sessionId: SessionId('alice-session') },
+        { sessionId: SessionId('bob-session') },
+        { sessionId: SessionId('missing-session') },
+      ],
+    }
+    await expect(policy.invoke(
+      request('session', 'search'),
+      () => Promise.resolve(search),
+    )).resolves.toEqual({ items: [{ sessionId: SessionId('alice-session') }] })
+
+    const entries = [null, 'text', { provider: 'other' }, { provider: 'deepseek-official' }]
+    credentialConfigured.value = false
+    await expect(policy.invoke(
+      request('llm', 'listConfigurableProviders'),
+      () => Promise.resolve(entries),
+    )).resolves.toEqual(entries)
+    credentialConfigured.value = true
+    optedIn.value = true
+    await expect(policy.invoke(
+      request('llm', 'listConfigurableProviders'),
+      () => Promise.resolve(entries),
+    )).resolves.toEqual([
+      null,
+      'text',
+      { provider: 'other' },
+      { provider: 'deepseek-official', managedModels: ['deepseek-v4-flash'] },
+    ])
+    await expect(policy.invoke(
+      request('llm', 'listConfigurableProviders'),
+      () => Promise.resolve({ provider: 'deepseek-official' }),
+    )).resolves.toEqual({ provider: 'deepseek-official' })
+  })
+
+  it('projects every workspace stream frame without leaking foreign resources', async () => {
+    const { ctx, alice, bob } = fixture()
+    const source = (async function *() {
+      yield {
+        type: 'baseline',
+        value: {
+          items: [
+            { workspaceId: 'alice-workspace', path: join(alice.projects, 'one') },
+            { workspaceId: 'bob-workspace', path: join(bob.projects, 'one') },
+          ],
+          archivedSessionIds: [SessionId('alice-session'), SessionId('bob-session')],
+        },
+      }
+      yield { type: 'upsert', workspace: { workspaceId: 'bob-new', path: join(bob.projects, 'new') } }
+      yield { type: 'upsert', workspace: { workspaceId: 'alice-new', path: join(alice.projects, 'new') } }
+      yield { type: 'order', workspaceIds: ['bob-workspace', 'alice-workspace', 'alice-new'] }
+      yield { type: 'remove', workspaceId: 'bob-workspace' }
+      yield { type: 'remove', workspaceId: 'alice-new' }
+      yield { type: 'archived', archivedSessionIds: [SessionId('alice-session'), SessionId('bob-session')] }
+    })()
+    const projected = await userScopedRemotePolicy(ctx).stream(
+      request('workspace', 'follow'),
+      () => Promise.resolve(source),
+    )
+    const frames: unknown[] = []
+    for await (const frame of projected) frames.push(frame)
+    expect(frames).toEqual([
+      {
+        type: 'baseline',
+        value: {
+          items: [{ workspaceId: 'alice-workspace', path: join(alice.projects, 'one') }],
+          archivedSessionIds: [SessionId('alice-session')],
+        },
+      },
+      { type: 'upsert', workspace: { workspaceId: 'alice-new', path: join(alice.projects, 'new') } },
+      { type: 'order', workspaceIds: ['alice-workspace', 'alice-new'] },
+      { type: 'remove', workspaceId: 'alice-new' },
+      { type: 'archived', archivedSessionIds: [SessionId('alice-session')] },
+    ])
+  })
+
+  it('projects global events by role and owned resource', async () => {
+    const { ctx, current, alice, bob } = fixture()
+    const frames = [
+      null,
+      'invalid',
+      { type: 'unknown' },
+      { type: 'ready', host: { home: '/host-home' }, version: 1 },
+      { type: 'waterfall', agentId: 'bob-session' },
+      { type: 'waterfall', agentId: 'alice-session' },
+      { type: 'cancel' },
+      { type: 'emit', event: 'llm/adapters-updated', args: [] },
+      { type: 'emit', event: 'credentials/reference-updated', args: [] },
+      { type: 'emit', event: 'settings/document-updated', args: [] },
+      { type: 'emit', event: 'cordis/plugin-added', args: [] },
+      { type: 'emit', event: 'api-session/added', args: [null] },
+      { type: 'emit', event: 'api-session/added', args: [{ cwd: join(bob.projects, 'one') }] },
+      { type: 'emit', event: 'api-session/added', args: [{ cwd: join(alice.projects, 'one') }] },
+      { type: 'emit', event: 'session/custom', args: [42, 'bob-session'] },
+      { type: 'emit', event: 'session/custom', args: [42, 'alice-session'] },
+      { type: 'emit', event: 'session/custom', args: [42] },
+    ]
+    const collect = async (): Promise<unknown[]> => {
+      const source = (async function *() { for (const frame of frames) yield frame })()
+      const projected = await userScopedRemotePolicy(ctx).stream(
+        request('$events', 'follow'),
+        () => Promise.resolve(source),
+      )
+      const result: unknown[] = []
+      for await (const frame of projected) result.push(frame)
+      return result
+    }
+    const ordinary = await collect()
+    expect(ordinary).toEqual([
+      { type: 'ready', host: { home: alice.root }, version: 1 },
+      { type: 'waterfall', agentId: 'alice-session' },
+      { type: 'cancel' },
+      { type: 'emit', event: 'llm/adapters-updated', args: [] },
+      { type: 'emit', event: 'api-session/added', args: [{ cwd: join(alice.projects, 'one') }] },
+      { type: 'emit', event: 'session/custom', args: [42, 'alice-session'] },
+    ])
+
+    current.value = principal(user('alice', 'admin'))
+    const admin = await collect()
+    expect(admin).toContainEqual({ type: 'emit', event: 'credentials/reference-updated', args: [] })
+    expect(admin).toContainEqual({ type: 'emit', event: 'settings/document-updated', args: [] })
+    expect(admin).toContainEqual({ type: 'emit', event: 'cordis/plugin-added', args: [] })
+  })
+
+  it('returns untouched streams and ordinary values for unrelated safe endpoints', async () => {
+    const { ctx, current } = fixture()
+    const policy = userScopedRemotePolicy(ctx)
+    const source = (async function *() { yield { type: 'value' } })()
+    await expect(policy.stream(
+      request('workspace', 'create', { request: { path: ctx.auth.userPaths(current.value.user.id).projects } }),
+      () => Promise.resolve(source),
+    )).resolves.toBe(source)
+    await expect(policy.invoke(
+      request('llm', 'listProviders'),
+      () => Promise.resolve('unchanged'),
+    )).resolves.toBe('unchanged')
+
+    current.value = principal(user('alice', 'admin'))
+    await expect(policy.invoke(
+      request('agentPresets', 'list'),
+      () => Promise.resolve({ presets: [], authorable: true }),
+    )).resolves.toEqual({ presets: [], authorable: true })
+    current.value = principal(user('alice'))
+    await expect(policy.invoke(
+      request('agentPresets', 'list'),
+      () => Promise.resolve(null),
+    )).resolves.toBeNull()
   })
 })

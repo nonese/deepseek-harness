@@ -202,6 +202,7 @@ function scrypt(password: string, salt: Buffer): Promise<Buffer> {
       p: SCRYPT_P,
       maxmem: 64 * 1024 * 1024,
     }, (error, derivedKey) => {
+      /* v8 ignore next -- fixed validated scrypt parameters leave only external runtime failures. */
       if (error !== null) reject(error)
       else resolveScrypt(derivedKey)
     })
@@ -258,6 +259,7 @@ async function readJson<T>(filename: string, fallback: T): Promise<T> {
 }
 
 async function assertPrivateFile(filename: string): Promise<void> {
+  /* v8 ignore next -- the Windows CI lane owns the platform-specific permission path. */
   if (process.platform === 'win32') return
   try {
     const mode = (await stat(filename)).mode & 0o777
@@ -319,6 +321,7 @@ export class FileAuthService extends AuthService {
       await this.writes
     }
     await mkdir(this.systemRoot, { recursive: true, mode: 0o700 })
+    /* v8 ignore else -- the Windows CI lane owns the platform-specific permission path. */
     if (process.platform !== 'win32') await chmod(this.systemRoot, 0o700)
     await Promise.all([
       assertPrivateFile(this.usersFile),
@@ -416,6 +419,7 @@ export class FileAuthService extends AuthService {
       let user = identity === undefined
         ? undefined
         : this.users.find(candidate => candidate.id === identity.userId)
+      /* v8 ignore next -- startup rejects orphan bindings and users have no deletion operation. */
       if (identity !== undefined && user === undefined) {
         throw new Error('auth-file: OIDC identity references a missing user')
       }
@@ -452,6 +456,7 @@ export class FileAuthService extends AuthService {
       await Promise.all([this.persistUsers(), this.persistSessions(), this.persistOidc()])
       issued = { token, principal: this.principal(user, session) }
     })
+    /* v8 ignore next -- the serialized operation assigns a session or rejects. */
     if (issued === undefined) throw new Error('auth-file: OIDC login did not issue a session')
     await this.ensureUserPaths(issued.principal.user.id)
     return issued
@@ -610,6 +615,7 @@ export class FileAuthService extends AuthService {
     ]
     await Promise.all(directories.map(async (path) => {
       await mkdir(path, { recursive: true, mode: 0o700 })
+      /* v8 ignore else -- the Windows CI lane owns the platform-specific permission path. */
       if (process.platform !== 'win32') await chmod(path, 0o700)
     }))
     return paths

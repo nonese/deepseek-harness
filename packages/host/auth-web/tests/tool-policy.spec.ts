@@ -77,7 +77,9 @@ describe('dynamic Cordis tool policy', () => {
     await fiber.await()
 
     const executeCordis = vi.fn(async () => 'cordis ran')
+    const executePlain = vi.fn(async () => 'plain ran')
     ctx.tools.register(tool('cordis_define', executeCordis))
+    ctx.tools.register(tool('read_file', executePlain))
     const ordinary = agent(ctx, 'alice', '/srv/users/alice/projects/demo')
     const administrator = agent(ctx, 'root', '/srv/users/root/projects/demo')
     expect(resultText(await ctx.tools.execute({
@@ -104,6 +106,27 @@ describe('dynamic Cordis tool policy', () => {
       agent: administrator,
     }))).toBe('Error: 仅管理员可使用动态 Cordis 插件')
     expect(executeCordis).toHaveBeenCalledTimes(1)
+
+    expect(resultText(await ctx.tools.execute({
+      signal,
+      callId: ToolCallId('plain-call'),
+      name: 'read_file',
+      arguments: {},
+    }))).toBe('plain ran')
+    expect(resultText(await ctx.tools.execute({
+      signal,
+      callId: ToolCallId('missing-agent-call'),
+      name: 'cordis_define',
+      arguments: {},
+    }))).toBe('Error: 仅管理员可使用动态 Cordis 插件')
+    expect(resultText(await ctx.tools.execute({
+      signal,
+      callId: ToolCallId('missing-cwd-call'),
+      name: 'cordis_define',
+      arguments: {},
+      agent: agent(ctx, 'nobody', ''),
+    }))).toBe('Error: 仅管理员可使用动态 Cordis 插件')
+    expect(executePlain).toHaveBeenCalledOnce()
 
     await fiber.dispose()
   })

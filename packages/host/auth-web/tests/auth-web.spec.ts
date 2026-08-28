@@ -1,7 +1,7 @@
 /** Real Loader composition coverage for browser authentication routes. */
 
 import { createHash, createSign, generateKeyPairSync } from 'node:crypto'
-import { createServer, type Server } from 'node:http'
+import { createServer, request as httpRequest, type Server } from 'node:http'
 import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,6 +11,7 @@ import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
 import AuthFile from '@deepseek-ai/dsh-auth-file'
+import type { ConnectionRequestAuthenticator } from '@deepseek-ai/dsh-client-connection'
 import CredentialsLocal from '@deepseek-ai/dsh-credentials-local'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
 import * as AuthWeb from '../src/index.ts'
@@ -46,12 +47,23 @@ function encodeJson(value: unknown): string {
 async function startOidcProvider(): Promise<{
   issuer: string
   captureAuthorization(url: URL): void
+  setClaims(claims: Readonly<Record<string, unknown>>): void
+  setSupportsPkce(value: boolean | undefined): void
 }> {
   const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
   const publicJwk = publicKey.export({ format: 'jwk' })
   let issuer = ''
   let expectedNonce = ''
   let expectedChallenge = ''
+  let supportsPkce: boolean | undefined = true
+  let customClaims: Readonly<Record<string, unknown>> = {
+    sub: 'oidc-user-1',
+    preferred_username: 'external.user',
+    name: '企业普通用户',
+    email: 'external.user@example.test',
+    email_verified: true,
+    groups: ['teacher', 'perm:self.profile.read'],
+  }
   const handle = async (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? '/', issuer || 'http://127.0.0.1')
     if (url.pathname === '/api/oidc/.well-known/openid-configuration') {
@@ -66,7 +78,9 @@ async function startOidcProvider(): Promise<{
         subject_types_supported: ['public'],
         id_token_signing_alg_values_supported: ['RS256'],
         token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post', 'none'],
-        code_challenge_methods_supported: ['S256'],
+        ...supportsPkce === undefined
+          ? {}
+          : { code_challenge_methods_supported: supportsPkce ? ['S256'] : [] },
         scopes_supported: ['openid', 'profile', 'email', 'groups'],
         claims_supported: ['sub', 'preferred_username', 'name', 'email', 'email_verified', 'groups'],
       })
@@ -105,16 +119,11 @@ async function startOidcProvider(): Promise<{
       const now = Math.floor(Date.now() / 1000)
       const signingInput = `${encodeJson({ alg: 'RS256', kid: 'test-key', typ: 'JWT' })}.${encodeJson({
         iss: issuer,
-        sub: 'oidc-user-1',
         aud: 'harness-client',
         iat: now,
         exp: now + 3600,
         nonce: expectedNonce,
-        preferred_username: 'external.user',
-        name: '企业普通用户',
-        email: 'external.user@example.test',
-        email_verified: true,
-        groups: ['teacher', 'perm:self.profile.read'],
+        ...customClaims,
       })}`
       const signature = createSign('RSA-SHA256').update(signingInput).sign(privateKey, 'base64url')
       json(res, {
@@ -145,10 +154,29 @@ async function startOidcProvider(): Promise<{
       expectedNonce = url.searchParams.get('nonce') ?? ''
       expectedChallenge = url.searchParams.get('code_challenge') ?? ''
     },
+    setClaims(claims) {
+      customClaims = claims
+    },
+    setSupportsPkce(value) {
+      supportsPkce = value
+    },
   }
 }
 
-async function boot(): Promise<{ context: Context; origin: string }> {
+interface BootOptions {
+  readonly secureCookie?: boolean
+  readonly maxBodyBytes?: number
+}
+
+interface BootResult {
+  readonly context: Context
+  readonly origin: string
+  readonly authenticator: ConnectionRequestAuthenticator
+  readonly sessions: Array<{ header: { cwd?: string; createdAt: number } }>
+  readonly workspaces: Array<Record<string, unknown>>
+}
+
+async function boot(options: BootOptions = {}): Promise<BootResult> {
   root = await mkdtemp(join(tmpdir(), 'harness-auth-web-'))
   vi.stubEnv('HARNESS_TEST_ADMIN_PASSWORD', 'correct horse battery staple')
   const configPath = join(root, 'cordis.yml')
@@ -167,16 +195,24 @@ async function boot(): Promise<{ context: Context; origin: string }> {
     "    host: '127.0.0.1'",
     '    port: 0',
     "- name: '@deepseek-ai/dsh-host-auth-web'",
+    '  config:',
+    `    secureCookie: ${String(options.secureCookie ?? false)}`,
+    `    maxBodyBytes: ${String(options.maxBodyBytes ?? 64 * 1024)}`,
     '',
   ].join('\n'))
 
   const workspaces: Array<Record<string, unknown>> = []
+  const sessions: Array<{ header: { cwd?: string; createdAt: number } }> = []
+  let authenticator: ConnectionRequestAuthenticator | undefined
   const testDeps = {
     name: 'auth-web-test-deps',
     apply(context: Context) {
-      context.provide('sessions', { list: () => [] } as never)
+      context.provide('sessions', { list: () => sessions } as never)
       context.provide('connection', {
-        registerAuthenticator: () => () => Promise.resolve(),
+        registerAuthenticator: (value: ConnectionRequestAuthenticator) => {
+          authenticator = value
+          return () => Promise.resolve()
+        },
       } as never)
       context.provide('sessionController', { inspect: vi.fn() } as never)
       context.provide('typertGateway', {
@@ -222,7 +258,52 @@ async function boot(): Promise<{ context: Context; origin: string }> {
   } as unknown as NonNullable<typeof ctx.loader.internal>
   await ctx.loader.create({ name: 'cordis:include', config: { path: pathToFileURL(configPath).href } })
   await ctx.loader.await()
-  return { context: ctx, origin: `http://127.0.0.1:${String(ctx.webServer.port)}` }
+  if (authenticator === undefined) throw new Error('authentication route did not register its Connection policy')
+  return {
+    context: ctx,
+    origin: `http://127.0.0.1:${String(ctx.webServer.port)}`,
+    authenticator,
+    sessions,
+    workspaces,
+  }
+}
+
+async function localLogin(origin: string, username = 'admin', password = 'correct horse battery staple'): Promise<string> {
+  const response = await fetch(`${origin}/auth/login/local`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin },
+    body: JSON.stringify({ username, password }),
+  })
+  const cookie = response.headers.get('set-cookie')?.split(';', 1)[0]
+  if (response.status !== 200 || cookie === undefined) throw new Error(`local login failed with HTTP ${String(response.status)}`)
+  return cookie
+}
+
+function jsonHeaders(origin: string, cookie?: string): Record<string, string> {
+  return {
+    'content-type': 'application/json',
+    origin,
+    ...cookie === undefined ? {} : { cookie },
+  }
+}
+
+async function postWithoutHost(origin: string, path: string, requestOrigin: string): Promise<number> {
+  const target = new URL(origin)
+  return await new Promise<number>((resolveStatus, reject) => {
+    const req = httpRequest({
+      hostname: target.hostname,
+      port: target.port,
+      path,
+      method: 'POST',
+      headers: { origin: requestOrigin },
+      setHost: false,
+    }, (res) => {
+      res.resume()
+      res.once('end', () => { resolveStatus(res.statusCode ?? 0) })
+    })
+    req.once('error', reject)
+    req.end()
+  })
 }
 
 describe('real authentication route composition', () => {
@@ -461,5 +542,503 @@ describe('real authentication route composition', () => {
       redirect: 'manual',
     })
     expect(replay.headers.get('location')).toBe('/?oidc_error=flow_expired')
+  })
+
+  it('covers connection authentication, local account administration, and route validation', { timeout: 60_000 }, async () => {
+    const { context, origin, authenticator, sessions, workspaces } = await boot()
+    expect(context.webServer.collectIndexInjections()).toContainEqual({
+      kind: 'global',
+      name: '__HARNESS_MULTI_USER__',
+      value: true,
+    })
+    await expect(authenticator.authorizeIndex({ headers: {} }, {
+      writeHead: vi.fn(),
+      end: vi.fn(),
+    })).resolves.toBe(true)
+    expect(authenticator.authenticatedUrl(origin)).toBe(origin)
+    await expect(authenticator.authenticate({ headers: {} })).resolves.toBeUndefined()
+    await expect(authenticator.authenticate({ headers: new Headers() })).resolves.toBeUndefined()
+    await expect(authenticator.authenticate({ headers: new Headers({ cookie: 'other=value; malformed' }) })).resolves.toBeUndefined()
+    await expect(authenticator.authenticate({ headers: { cookie: ['harness_session=%', 'other=value'] } })).resolves.toBeUndefined()
+    await expect(authenticator.authenticate({ headers: { cookie: 'harness_session=unknown-token' } })).resolves.toBeUndefined()
+
+    expect((await fetch(`${origin}/auth/login/local`, {
+      method: 'POST',
+      headers: jsonHeaders(origin),
+      body: JSON.stringify({ username: 'admin', password: 'wrong password' }),
+    })).status).toBe(401)
+    for (const originHeader of [':::', 'ftp://127.0.0.1']) {
+      expect((await fetch(`${origin}/auth/login/local`, {
+        method: 'POST',
+        headers: { ...jsonHeaders(origin), origin: originHeader },
+        body: '{}',
+      })).status).toBe(403)
+    }
+    await expect(postWithoutHost(origin, '/auth/logout', origin)).resolves.toBe(400)
+    expect((await fetch(`${origin}/auth/logout`, { method: 'POST' })).status).toBe(200)
+    expect((await fetch(`${origin}/auth/logout`, {
+      method: 'POST',
+      headers: { origin: origin.replace('http:', 'https:') },
+    })).status).toBe(200)
+    for (const body of ['', 'null', '[]', '"text"', '{']) {
+      expect((await fetch(`${origin}/auth/login/local`, {
+        method: 'POST',
+        headers: jsonHeaders(origin),
+        body,
+      })).status).toBe(400)
+    }
+    expect((await fetch(`${origin}/auth/login/local`, {
+      method: 'POST',
+      headers: jsonHeaders(origin),
+      body: JSON.stringify({ username: 1, password: 'value' }),
+    })).status).toBe(400)
+
+    const adminCookie = await localLogin(origin)
+    const authenticated = await authenticator.authenticate({ headers: { cookie: ['other=value', adminCookie] } })
+    expect(authenticated?.run(() => context.auth.currentPrincipal()?.user.username)).toBe('admin')
+    expect(context.auth.currentPrincipal()).toBeUndefined()
+    expect(await (await fetch(`${origin}/auth/session`, {
+      headers: { cookie: 'part-without-equals; harness_session=%' },
+    })).json()).toMatchObject({ authenticated: false })
+    expect(await (await fetch(`${origin}/auth/session`, {
+      headers: { cookie: 'other=value' },
+    })).json()).toMatchObject({ authenticated: false })
+
+    const created = await fetch(`${origin}/auth/users`, {
+      method: 'POST',
+      headers: jsonHeaders(origin, adminCookie),
+      body: JSON.stringify({
+        username: 'member',
+        password: 'ordinary member password',
+        displayName: 'Member One',
+        role: 'user',
+      }),
+    })
+    expect(created.status).toBe(201)
+    const createdBody = await created.json() as { user: { id: string } }
+    const memberId = createdBody.user.id
+    expect((await fetch(`${origin}/auth/users`, {
+      method: 'POST',
+      headers: jsonHeaders(origin, adminCookie),
+      body: JSON.stringify({ username: 'member', password: 'ordinary member password' }),
+    })).status).toBe(409)
+    for (const body of [
+      { username: 'invalid-role', password: 'ordinary member password', role: 'owner' },
+      { username: 'invalid-display', password: 'ordinary member password', displayName: 1 },
+    ]) {
+      expect((await fetch(`${origin}/auth/users`, {
+        method: 'POST',
+        headers: jsonHeaders(origin, adminCookie),
+        body: JSON.stringify(body),
+      })).status).toBe(400)
+    }
+
+    const adminId = context.auth.listUsers().find(account => account.username === 'admin')?.id
+    if (adminId === undefined) throw new Error('administrator id missing')
+    expect((await fetch(`${origin}/auth/users/${encodeURIComponent(adminId)}`, {
+      method: 'PATCH',
+      headers: jsonHeaders(origin, adminCookie),
+      body: JSON.stringify({ status: 'disabled' }),
+    })).status).toBe(409)
+    for (const body of [{ role: 'owner' }, { status: 'pending' }, { displayName: 1 }]) {
+      expect((await fetch(`${origin}/auth/users/${encodeURIComponent(memberId)}`, {
+        method: 'PATCH',
+        headers: jsonHeaders(origin, adminCookie),
+        body: JSON.stringify(body),
+      })).status).toBe(400)
+    }
+    const patched = await fetch(`${origin}/auth/users/${encodeURIComponent(memberId)}`, {
+      method: 'PATCH',
+      headers: jsonHeaders(origin, adminCookie),
+      body: JSON.stringify({ displayName: 'Member Renamed', role: 'admin', status: 'active' }),
+    })
+    expect(await patched.json()).toMatchObject({ user: { displayName: 'Member Renamed', role: 'admin', status: 'active' } })
+    expect((await fetch(`${origin}/auth/users/${encodeURIComponent(memberId)}`, {
+      method: 'PATCH',
+      headers: jsonHeaders(origin, adminCookie),
+      body: '{}',
+    })).status).toBe(200)
+    expect((await fetch(`${origin}/auth/users/missing-user`, {
+      method: 'PATCH',
+      headers: jsonHeaders(origin, adminCookie),
+      body: '{}',
+    })).status).toBe(404)
+
+    expect((await fetch(`${origin}/auth/users/${encodeURIComponent(memberId)}/reset-password`, {
+      method: 'POST',
+      headers: jsonHeaders(origin, adminCookie),
+      body: JSON.stringify({ password: 'replacement member password' }),
+    })).status).toBe(200)
+    expect((await fetch(`${origin}/auth/users/missing-user/reset-password`, {
+      method: 'POST',
+      headers: jsonHeaders(origin, adminCookie),
+      body: JSON.stringify({ password: 'replacement member password' }),
+    })).status).toBe(404)
+    const memberCookie = await localLogin(origin, 'member', 'replacement member password')
+    expect((await fetch(`${origin}/auth/users`, { headers: { cookie: memberCookie } })).status).toBe(200)
+
+    const disabled = await fetch(`${origin}/auth/users/${encodeURIComponent(memberId)}`, {
+      method: 'PATCH',
+      headers: jsonHeaders(origin, adminCookie),
+      body: JSON.stringify({ role: 'user', status: 'disabled' }),
+    })
+    expect(disabled.status).toBe(200)
+    expect((await fetch(`${origin}/auth/login/local`, {
+      method: 'POST',
+      headers: jsonHeaders(origin),
+      body: JSON.stringify({ username: 'member', password: 'replacement member password' }),
+    })).status).toBe(403)
+
+    for (const name of ['', 'x'.repeat(81)]) {
+      expect((await fetch(`${origin}/auth/projects`, {
+        method: 'POST',
+        headers: jsonHeaders(origin, adminCookie),
+        body: JSON.stringify({ name }),
+      })).status).toBe(400)
+    }
+    const projectResponse = await fetch(`${origin}/auth/projects`, {
+      method: 'POST',
+      headers: jsonHeaders(origin, adminCookie),
+      body: JSON.stringify({ name: '  Managed project  ' }),
+    })
+    expect(projectResponse.status).toBe(201)
+    expect((await fetch(`${origin}/auth/projects`, {
+      method: 'POST',
+      headers: jsonHeaders(origin, adminCookie),
+      body: JSON.stringify({ name: 'Older project' }),
+    })).status).toBe(201)
+    const workspace = workspaces[0]
+    if (workspace === undefined || typeof workspace.path !== 'string') throw new Error('created workspace missing')
+    sessions.push(
+      { header: { cwd: workspace.path, createdAt: 20 } },
+      { header: { cwd: workspace.path, createdAt: 10 } },
+      { header: { createdAt: 30 } },
+      { header: { cwd: join(root as string, 'outside'), createdAt: 40 } },
+    )
+    const projectList = await (await fetch(`${origin}/auth/projects`, {
+      headers: { cookie: adminCookie },
+    })).json() as { projects: Array<{ name: string; sessionCount: number; updatedAt: number }> }
+    expect(projectList.projects.find(candidate => candidate.name === 'Managed project')).toMatchObject({
+      name: 'Managed project',
+      sessionCount: 2,
+      updatedAt: 20,
+    })
+
+    const originalCreate = context.workspaceRegistry.create.bind(context.workspaceRegistry)
+    Reflect.set(context.workspaceRegistry, 'create', async () => ({
+      id: 'outside-workspace',
+      path: join(root as string, 'outside'),
+      title: 'outside',
+      sessionIds: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      setTitle: () => Promise.resolve(),
+    }))
+    expect((await fetch(`${origin}/auth/projects`, {
+      method: 'POST',
+      headers: jsonHeaders(origin, adminCookie),
+      body: JSON.stringify({ name: 'Outside project' }),
+    })).status).toBe(400)
+    Reflect.set(context.workspaceRegistry, 'create', originalCreate)
+
+    for (const apiKey of ['', 'bad\u0000key']) {
+      expect((await fetch(`${origin}/auth/system/shared-deepseek`, {
+        method: 'PUT',
+        headers: jsonHeaders(origin, adminCookie),
+        body: JSON.stringify({ apiKey }),
+      })).status).toBe(400)
+    }
+    expect((await fetch(`${origin}/auth/not-found`, { headers: { cookie: adminCookie } })).status).toBe(404)
+
+    expect((await fetch(`${origin}/auth/logout`, {
+      method: 'POST',
+      headers: { origin },
+    })).status).toBe(200)
+    const logout = await fetch(`${origin}/auth/logout`, {
+      method: 'POST',
+      headers: { cookie: adminCookie, origin },
+    })
+    expect(logout.status).toBe(200)
+    expect(logout.headers.get('set-cookie')).toContain('Max-Age=0')
+  })
+
+  it('rejects invalid OIDC administration input and supports public clients', { timeout: 60_000 }, async () => {
+    const { origin } = await boot()
+    const adminCookie = await localLogin(origin)
+    const base = {
+      enabled: false,
+      issuer: 'https://id.example.test/',
+      clientId: 'harness-client',
+      redirectUri: `${origin}/auth/oidc/callback`,
+      scopes: ['openid', 'profile'],
+      clientAuthMethod: 'none',
+      allowInsecureIssuer: true,
+      administratorGroup: '',
+    }
+    const invalidBodies: unknown[] = [
+      { ...base, allowInsecureIssuer: 'yes' },
+      { ...base, issuer: 'not a url' },
+      { ...base, issuer: 'https://user@id.example.test/oidc' },
+      { ...base, issuer: 'https://id.example.test/oidc?query=yes' },
+      { ...base, issuer: 'https://id.example.test/oidc#fragment' },
+      { ...base, issuer: 'http://id.example.test/oidc', allowInsecureIssuer: false },
+      { ...base, redirectUri: `${origin}/wrong-callback` },
+      { ...base, clientId: '' },
+      { ...base, clientId: 'x'.repeat(257) },
+      { ...base, scopes: 'openid' },
+      { ...base, scopes: ['openid', 1] },
+      { ...base, scopes: [] },
+      { ...base, scopes: Array.from({ length: 17 }, (_, index) => `scope${String(index)}`) },
+      { ...base, scopes: ['openid', 'bad scope'] },
+      { ...base, scopes: ['profile'] },
+      { ...base, clientAuthMethod: 'unsupported' },
+      { ...base, administratorGroup: 'admin group' },
+      { ...base, administratorGroup: 'x'.repeat(129) },
+      { ...base, enabled: 'yes' },
+      { ...base, clientSecret: '' },
+      { ...base, clientSecret: 'x'.repeat(4097) },
+      { ...base, clientSecret: 'public-clients-have-no-secret' },
+    ]
+    for (const body of invalidBodies) {
+      const response = await fetch(`${origin}/auth/system/oidc`, {
+        method: 'PUT',
+        headers: jsonHeaders(origin, adminCookie),
+        body: JSON.stringify(body),
+      })
+      expect(response.status, JSON.stringify(body).slice(0, 200)).toBe(400)
+    }
+
+    const publicClient = await fetch(`${origin}/auth/system/oidc`, {
+      method: 'PUT',
+      headers: jsonHeaders(origin, adminCookie),
+      body: JSON.stringify(base),
+    })
+    expect(publicClient.status).toBe(200)
+    expect(await publicClient.json()).toMatchObject({
+      oidc: { enabled: false, clientSecretConfigured: false, settings: { clientAuthMethod: 'none' } },
+    })
+    expect((await fetch(`${origin}/auth/oidc/start`, { redirect: 'manual' })).headers.get('location')).toContain('oidc_error=unavailable')
+
+    const disabledConfidential = await fetch(`${origin}/auth/system/oidc`, {
+      method: 'PUT',
+      headers: jsonHeaders(origin, adminCookie),
+      body: JSON.stringify({ ...base, clientAuthMethod: 'client_secret_basic' }),
+    })
+    expect(disabledConfidential.status).toBe(200)
+    expect((await fetch(`${origin}/auth/system/oidc/test`, {
+      method: 'POST',
+      headers: jsonHeaders(origin, adminCookie),
+      body: '{}',
+    })).status).toBe(400)
+    expect((await fetch(`${origin}/auth/system/oidc`, {
+      method: 'PUT',
+      headers: jsonHeaders(origin, adminCookie),
+      body: JSON.stringify({ ...base, enabled: true, clientAuthMethod: 'client_secret_basic' }),
+    })).status).toBe(400)
+
+    const provider = await startOidcProvider()
+    const publicRuntime = {
+      ...base,
+      enabled: true,
+      issuer: provider.issuer,
+      redirectUri: `${origin}/auth/oidc/callback`,
+      clientAuthMethod: 'none',
+    }
+    expect((await fetch(`${origin}/auth/system/oidc`, {
+      method: 'PUT',
+      headers: jsonHeaders(origin, adminCookie),
+      body: JSON.stringify(publicRuntime),
+    })).status).toBe(200)
+    provider.setSupportsPkce(undefined)
+    const publicTest = await fetch(`${origin}/auth/system/oidc/test`, {
+      method: 'POST',
+      headers: jsonHeaders(origin, adminCookie),
+      body: '{}',
+    })
+    expect(await publicTest.json()).toMatchObject({ oidc: { ok: true, supportsPkceS256: false } })
+    provider.setSupportsPkce(true)
+
+    const secureIssuer = {
+      ...publicRuntime,
+      issuer: provider.issuer.replace('http:', 'https:'),
+      redirectUri: `${origin.replace('http:', 'https:')}/auth/oidc/callback`,
+      allowInsecureIssuer: false,
+    }
+    expect((await fetch(`${origin}/auth/system/oidc`, {
+      method: 'PUT',
+      headers: jsonHeaders(origin, adminCookie),
+      body: JSON.stringify(secureIssuer),
+    })).status).toBe(200)
+    expect((await fetch(`${origin}/auth/system/oidc/test`, {
+      method: 'POST',
+      headers: jsonHeaders(origin, adminCookie),
+      body: '{}',
+    })).status).toBe(400)
+
+    const confidential = {
+      ...base,
+      enabled: true,
+      issuer: provider.issuer,
+      redirectUri: `${origin}/auth/oidc/callback`,
+      allowInsecureIssuer: true,
+      clientAuthMethod: 'client_secret_post',
+      clientSecret: 'harness-secret',
+    }
+    expect((await fetch(`${origin}/auth/system/oidc`, {
+      method: 'PUT',
+      headers: jsonHeaders(origin, adminCookie),
+      body: JSON.stringify(confidential),
+    })).status).toBe(200)
+    expect((await fetch(`${origin}/auth/system/oidc/test`, {
+      method: 'POST',
+      headers: jsonHeaders(origin, adminCookie),
+      body: '{}',
+    })).status).toBe(200)
+
+    expect((await fetch(`${origin}/auth/oidc/callback`, { redirect: 'manual' })).headers.get('location')).toContain('oidc_error=flow_expired')
+
+    const start = await fetch(`${origin}/auth/oidc/start`, { redirect: 'manual' })
+    const authorization = new URL(start.headers.get('location') as string)
+    const state = authorization.searchParams.get('state')
+    const flowCookie = start.headers.get('set-cookie')?.split(';', 1)[0]
+    if (state === null || flowCookie === undefined) throw new Error('OIDC state missing')
+    const denied = await fetch(`${origin}/auth/oidc/callback?error=access_denied&state=${encodeURIComponent(state)}`, {
+      headers: { cookie: flowCookie },
+      redirect: 'manual',
+    })
+    expect(denied.headers.get('location')).toContain('oidc_error=access_denied')
+
+    const changedStart = await fetch(`${origin}/auth/oidc/start`, { redirect: 'manual' })
+    const changedUrl = new URL(changedStart.headers.get('location') as string)
+    const changedState = changedUrl.searchParams.get('state')
+    const changedCookie = changedStart.headers.get('set-cookie')?.split(';', 1)[0]
+    if (changedState === null || changedCookie === undefined) throw new Error('OIDC changed state missing')
+    expect((await fetch(`${origin}/auth/oidc/callback?code=valid-code&state=${encodeURIComponent(changedState)}`, {
+      headers: { cookie: 'harness_session=wrong' },
+      redirect: 'manual',
+    })).headers.get('location')).toContain('oidc_error=flow_expired')
+    expect((await fetch(`${origin}/auth/system/oidc`, {
+      method: 'PUT',
+      headers: jsonHeaders(origin, adminCookie),
+      body: JSON.stringify({ ...confidential, clientId: 'changed-client', clientSecret: undefined }),
+    })).status).toBe(200)
+    const changed = await fetch(`${origin}/auth/oidc/callback?code=valid-code&state=${encodeURIComponent(changedState)}`, {
+      headers: { cookie: changedCookie },
+      redirect: 'manual',
+    })
+    expect(changed.headers.get('location')).toContain('oidc_error=configuration_changed')
+    expect((await fetch(`${origin}/auth/system/oidc`, {
+      method: 'PUT',
+      headers: jsonHeaders(origin, adminCookie),
+      body: JSON.stringify({ ...confidential, clientAuthMethod: 'client_secret_basic', clientSecret: undefined }),
+    })).status).toBe(200)
+
+    const failingStart = await fetch(`${origin}/auth/oidc/start`, { redirect: 'manual' })
+    const failingUrl = new URL(failingStart.headers.get('location') as string)
+    const failingState = failingUrl.searchParams.get('state')
+    const failingCookie = failingStart.headers.get('set-cookie')?.split(';', 1)[0]
+    if (failingState === null || failingCookie === undefined) throw new Error('OIDC failure state missing')
+    const failed = await fetch(`${origin}/auth/oidc/callback?code=invalid-code&state=${encodeURIComponent(failingState)}`, {
+      headers: { cookie: failingCookie },
+      redirect: 'manual',
+    })
+    expect(failed.headers.get('location')).toContain('oidc_error=login_failed')
+
+    const expiredStart = await fetch(`${origin}/auth/oidc/start`, { redirect: 'manual' })
+    const expiredUrl = new URL(expiredStart.headers.get('location') as string)
+    const expiredState = expiredUrl.searchParams.get('state')
+    const expiredFlowCookie = expiredStart.headers.get('set-cookie')?.split(';', 1)[0]
+    if (expiredState === null || expiredFlowCookie === undefined) throw new Error('OIDC expiry state missing')
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 11 * 60 * 1000)
+    const expired = await fetch(`${origin}/auth/oidc/callback?code=valid-code&state=${encodeURIComponent(expiredState)}`, {
+      headers: { cookie: expiredFlowCookie },
+      redirect: 'manual',
+    })
+    expect(expired.headers.get('location')).toContain('oidc_error=flow_expired')
+    clock.mockRestore()
+
+    const staleStart = await fetch(`${origin}/auth/oidc/start`, { redirect: 'manual' })
+    expect(staleStart.status).toBe(302)
+    const pruneClock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 11 * 60 * 1000)
+    expect((await fetch(`${origin}/auth/oidc/start`, { redirect: 'manual' })).status).toBe(302)
+    pruneClock.mockRestore()
+
+    provider.setClaims({ sub: 'oidc-minimal', groups: 'not-an-array' })
+    const minimalStart = await fetch(`${origin}/auth/oidc/start`, { redirect: 'manual' })
+    const minimalAuthorization = new URL(minimalStart.headers.get('location') as string)
+    provider.captureAuthorization(minimalAuthorization)
+    const minimalState = minimalAuthorization.searchParams.get('state')
+    const minimalCookie = minimalStart.headers.get('set-cookie')?.split(';', 1)[0]
+    if (minimalState === null || minimalCookie === undefined) throw new Error('OIDC minimal state missing')
+    const minimal = await fetch(`${origin}/auth/oidc/callback?code=valid-code&state=${encodeURIComponent(minimalState)}`, {
+      headers: { cookie: minimalCookie },
+      redirect: 'manual',
+    })
+    expect(minimal.headers.get('location')).toBe(`${origin}/`)
+
+    provider.setClaims({ sub: 'oidc-admin', preferred_username: 'oidc.admin', groups: ['super_admin'] })
+    const adminSettings = { ...confidential, clientAuthMethod: 'client_secret_basic', administratorGroup: 'super_admin', clientSecret: undefined }
+    expect((await fetch(`${origin}/auth/system/oidc`, {
+      method: 'PUT',
+      headers: jsonHeaders(origin, adminCookie),
+      body: JSON.stringify(adminSettings),
+    })).status).toBe(200)
+    const oidcAdminStart = await fetch(`${origin}/auth/oidc/start`, { redirect: 'manual' })
+    const oidcAdminAuthorization = new URL(oidcAdminStart.headers.get('location') as string)
+    provider.captureAuthorization(oidcAdminAuthorization)
+    const oidcAdminState = oidcAdminAuthorization.searchParams.get('state')
+    const oidcAdminCookie = oidcAdminStart.headers.get('set-cookie')?.split(';', 1)[0]
+    if (oidcAdminState === null || oidcAdminCookie === undefined) throw new Error('OIDC admin state missing')
+    const oidcAdmin = await fetch(`${origin}/auth/oidc/callback?code=valid-code&state=${encodeURIComponent(oidcAdminState)}`, {
+      headers: { cookie: oidcAdminCookie },
+      redirect: 'manual',
+    })
+    const oidcAdminSession = (oidcAdmin.headers as Headers & { getSetCookie(): string[] }).getSetCookie()
+      .find(value => value.startsWith('harness_session='))?.split(';', 1)[0]
+    if (oidcAdminSession === undefined) throw new Error('OIDC administrator session missing')
+    expect(await (await fetch(`${origin}/auth/session`, { headers: { cookie: oidcAdminSession } })).json()).toMatchObject({
+      user: { username: 'oidc.admin', role: 'admin' },
+    })
+
+    let busyLocation = ''
+    for (let index = 0; index < 257 && !busyLocation.includes('oidc_error=busy'); index += 1) {
+      const response = await fetch(`${origin}/auth/oidc/start`, { redirect: 'manual' })
+      busyLocation = response.headers.get('location') ?? ''
+    }
+    expect(busyLocation).toContain('oidc_error=busy')
+  })
+
+  it('honors secure cookies and the configured request limit', { timeout: 60_000 }, async () => {
+    const { origin } = await boot({ secureCookie: true, maxBodyBytes: 1024 })
+    const cookie = await localLogin(origin)
+    const response = await fetch(`${origin}/auth/logout`, {
+      method: 'POST',
+      headers: { cookie, origin },
+    })
+    expect(response.headers.get('set-cookie')).toContain('Secure')
+    const activeCookie = await localLogin(origin)
+    expect((await fetch(`${origin}/auth/login/local`, {
+      method: 'POST',
+      headers: jsonHeaders(origin),
+      body: JSON.stringify({ username: 'admin', password: 'x'.repeat(2048) }),
+    })).status).toBe(400)
+
+    const provider = await startOidcProvider()
+    expect((await fetch(`${origin}/auth/system/oidc`, {
+      method: 'PUT',
+      headers: jsonHeaders(origin, activeCookie),
+      body: JSON.stringify({
+        enabled: true,
+        issuer: provider.issuer,
+        clientId: 'harness-client',
+        redirectUri: `${origin}/auth/oidc/callback`,
+        scopes: ['openid'],
+        clientAuthMethod: 'none',
+        allowInsecureIssuer: true,
+        administratorGroup: '',
+      }),
+    })).status).toBe(200)
+    const start = await fetch(`${origin}/auth/oidc/start`, { redirect: 'manual' })
+    expect(start.headers.get('set-cookie')).toContain('Secure')
   })
 })

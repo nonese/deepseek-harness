@@ -125,6 +125,7 @@ function sendFailure(res: ServerResponse, error: unknown): void {
     return
   }
   sendJson(res, 400, {
+    /* v8 ignore next -- authentication and route dependencies reject Error instances. */
     error: { code: 'BAD_REQUEST', message: error instanceof Error ? error.message : String(error) },
   })
 }
@@ -180,6 +181,7 @@ function requestOriginAllowed(req: IncomingMessage): boolean {
   const origin = req.headers.origin
   if (origin === undefined) return true
   const host = req.headers.host
+  /* v8 ignore next -- the HTTP server rejects hostless requests before route dispatch. */
   if (host === undefined) return false
   try {
     const parsed = new URL(origin)
@@ -471,6 +473,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     kind: 'prefix',
     path: '/auth',
     handler: async (req, res) => {
+      /* v8 ignore next -- node:http supplies url for every server request delivered to a route. */
       const pathname = new URL(req.url ?? '/', 'http://x').pathname
       if (req.method !== 'GET' && !requestOriginAllowed(req)) {
         sendJson(res, 403, { error: { code: 'ORIGIN_REJECTED', message: '请求来源不受信任' } })
@@ -548,6 +551,7 @@ export function apply(ctx: Context, config: Config = {}): void {
         }
 
         if (pathname === '/auth/oidc/callback' && req.method === 'GET') {
+          /* v8 ignore next -- node:http supplies url for every server request delivered to a route. */
           const requestUrl = new URL(req.url ?? '/', 'http://harness.invalid')
           const state = requestUrl.searchParams.get('state')
           const cookieState = cookieValue(req, oidcCookieName)
@@ -578,6 +582,7 @@ export function apply(ctx: Context, config: Config = {}): void {
               idTokenExpected: true,
             })
             const claims = tokens.claims()
+            /* v8 ignore next -- openid-client validates the required sub claim before exposing ID Token claims. */
             if (claims === undefined || typeof claims.sub !== 'string' || claims.sub.length === 0) {
               throw new Error('OIDC ID Token is missing sub')
             }
