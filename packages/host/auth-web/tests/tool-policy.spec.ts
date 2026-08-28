@@ -1,7 +1,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it, vi } from 'vitest'
 import type { AuthUser, UserId } from '@deepseek-ai/dsh-auth'
-import { CallId } from '@deepseek-ai/dsh-llm'
+import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { type ToolDefinition, type ToolExecution } from '@deepseek-ai/dsh-tools'
@@ -66,6 +66,13 @@ describe('dynamic Cordis tool policy', () => {
     ctx.provide('webServer', {
       register: () => () => {},
     } as unknown as WebServer)
+    ctx.provide('connection', {
+      registerAuthenticator: () => () => Promise.resolve(),
+    } as never)
+    ctx.provide('sessionController', { inspect: vi.fn() } as never)
+    ctx.provide('typertGateway', {
+      registerMiddleware: () => () => Promise.resolve(),
+    } as never)
     const fiber = ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
 
@@ -75,14 +82,14 @@ describe('dynamic Cordis tool policy', () => {
     const administrator = agent(ctx, 'root', '/srv/users/root/projects/demo')
     expect(resultText(await ctx.tools.execute({
       signal,
-      callId: CallId('ordinary-call'),
+      callId: ToolCallId('ordinary-call'),
       name: 'cordis_define',
       arguments: {},
       agent: ordinary,
     }))).toBe('Error: 仅管理员可使用动态 Cordis 插件')
     expect(resultText(await ctx.tools.execute({
       signal,
-      callId: CallId('admin-call'),
+      callId: ToolCallId('admin-call'),
       name: 'cordis_define',
       arguments: {},
       agent: administrator,
@@ -91,7 +98,7 @@ describe('dynamic Cordis tool policy', () => {
     roles.set('/srv/users/root/projects/demo', user('root', 'user'))
     expect(resultText(await ctx.tools.execute({
       signal,
-      callId: CallId('demoted-call'),
+      callId: ToolCallId('demoted-call'),
       name: 'cordis_define',
       arguments: {},
       agent: administrator,

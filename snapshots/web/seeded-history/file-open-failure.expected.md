@@ -1,0 +1,7 @@
+- dialog "Couldn’t open file":
+  - heading "Couldn’t open file" [level=2]
+  - button "Close":
+    - img
+  - paragraph: "path open failed: server deployments do not expose host filesystem pickers or native path opening"
+  - button "Cancel"
+  - button "Retry"

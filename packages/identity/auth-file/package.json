@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-auth-file",
   "description": "Owner-only JSON authentication provider with scrypt passwords and revocable browser sessions",
-  "version": "0.1.0-rc.5",
+  "version": "0.1.2-alpha.1",
   "publishConfig": { "access": "public" },
   "repository": {
     "type": "git",

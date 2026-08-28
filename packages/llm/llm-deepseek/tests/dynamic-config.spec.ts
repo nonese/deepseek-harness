@@ -1,21 +1,95 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { Context, Service } from '@deepseek-ai/cordis'
+import { access, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import LlmRuntime, { INVALID_CREDENTIAL_CODE } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { createUserMessage, INVALID_CREDENTIAL_CODE } from '@deepseek-ai/dsh-llm'
+import AttachmentStore, { AttachmentId, ImageVariantId } from '@deepseek-ai/dsh-attachment'
+import type {
+  ImageAttachmentLimits,
+  ImageAttachmentRef,
+  ImageRequestPolicy,
+  RequestImageAttachment,
+  SaveImageAttachment,
+  StoredImageAttachment,
+} from '@deepseek-ai/dsh-attachment'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { LocalCredentialProvider } from '@deepseek-ai/dsh-credentials-local'
 import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import { FileSettingsProvider } from '@deepseek-ai/dsh-settings-file'
-import { FileAuthService } from '@deepseek-ai/dsh-auth-file'
-import { SessionId } from '@deepseek-ai/dsh-session'
 import * as LlmDeepSeek from '@deepseek-ai/dsh-llm-deepseek'
+import { SessionId } from '@deepseek-ai/dsh-session'
 import { assemble } from './assemble.ts'
 import { closeMockServers, mockServer, textEvents } from './mock-server.ts'
 
 const NS = settingsNamespace('llm-deepseek')
 const KEY_REF = credentialRef('DEEPSEEK_API_KEY')
+const SHARED_KEY_REF = credentialRef(LlmDeepSeek.SHARED_DEEPSEEK_API_KEY_ENV)
+const IMAGE_REF: ImageAttachmentRef = {
+  attachmentId: AttachmentId(`sha256:${'a'.repeat(64)}`),
+  mediaType: 'image/png',
+  bytes: 3,
+  width: 1,
+  height: 1,
+}
+const HOST_IMAGE_PATH = '/host/.dsh/attachments/objects/aa/object'
+const MODEL_IMAGE_PATH = '/model/.dsh/attachments/objects/aa/object'
+
+class MappedFileSystem extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'fs')
+  }
+
+  processPathFromHostPath(hostPath: string): string | undefined {
+    return hostPath === HOST_IMAGE_PATH ? MODEL_IMAGE_PATH : undefined
+  }
+}
+
+class StaticAttachmentStore extends AttachmentStore {
+  readonly imageLimits: ImageAttachmentLimits = {
+    maxImageBytes: 16,
+    maxImagesPerMessage: 4,
+    maxMessageImageBytes: 64,
+    maxImagePixels: 4,
+    maxImageDimension: 4,
+    mediaTypes: ['image/png'],
+  }
+
+  validateImage(_input: SaveImageAttachment): Promise<void> {
+    return Promise.resolve()
+  }
+
+  saveImage(_input: SaveImageAttachment): Promise<ImageAttachmentRef> {
+    return Promise.resolve(IMAGE_REF)
+  }
+
+  readImage(ref: ImageAttachmentRef, _signal?: AbortSignal): Promise<StoredImageAttachment> {
+    return Promise.resolve({ ref, data: Uint8Array.of(1, 2, 3) })
+  }
+
+  override imageHostPath(_ref: ImageAttachmentRef): string {
+    return HOST_IMAGE_PATH
+  }
+
+  override readImageRequest(
+    ref: ImageAttachmentRef,
+    _policy: ImageRequestPolicy,
+    _signal?: AbortSignal,
+  ): Promise<RequestImageAttachment> {
+    return Promise.resolve({
+      variantId: ImageVariantId(`sha256:${'b'.repeat(64)}`),
+      attachment: ref,
+      data: Uint8Array.of(1, 2, 3),
+      mediaType: ref.mediaType,
+      bytes: 3,
+      width: ref.width,
+      height: ref.height,
+      depth: 'uchar',
+      space: 'srgb',
+      hasAlpha: true,
+    })
+  }
+}
 
 const cleanups: Array<() => Promise<void>> = []
 
@@ -49,6 +123,7 @@ async function boot(dir: string, config: object): Promise<Harness> {
     await ctx.fiber.dispose()
   })
   await ctx.plugin(LlmRuntime)
+  await ctx.plugin(StaticAttachmentStore)
   const settingsFiber = ctx.plugin(FileSettingsProvider, { path: join(dir, 'settings.yaml'), watch: false })
   await settingsFiber
   await ctx.plugin(LocalCredentialProvider, { path: join(dir, '.credentials.yaml'), watch: false })
@@ -61,10 +136,62 @@ function prompt(ctx: Context) {
 }
 
 describe('request-level dynamic configuration', () => {
+  it('uses the administrator credential only for an opted-in owner and the exact Flash model', async () => {
+    vi.stubEnv('DEEPSEEK_API_KEY', '')
+    const dir = await home()
+    const server = await mockServer([
+      { kind: 'sse', events: textEvents },
+      { kind: 'sse', events: textEvents },
+      { kind: 'sse', events: textEvents },
+    ])
+    const optedIn = { value: true }
+    const ctx = new Context()
+    cleanups.push(() => ctx.fiber.dispose())
+    await ctx.plugin(LlmRuntime)
+    await ctx.plugin(StaticAttachmentStore)
+    await ctx.plugin(FileSettingsProvider, { path: join(dir, 'settings.yaml'), watch: false })
+    await ctx.plugin(LocalCredentialProvider, { path: join(dir, '.credentials.yaml'), watch: false })
+    ctx.provide('sessions', {
+      get: (id: SessionId) => id === 'managed-session'
+        ? { header: { cwd: join(dir, 'users', 'alice', 'projects', 'one') } }
+        : undefined,
+    } as never)
+    ctx.provide('auth', {
+      ownerForProjectPath: () => ({ id: 'alice-id', status: 'active' }),
+      sharedDeepSeekPreference: () => ({ enabled: optedIn.value }),
+    } as never)
+    await ctx.credentials.set(KEY_REF, 'personal-key')
+    await ctx.credentials.set(SHARED_KEY_REF, 'administrator-key')
+    await ctx.plugin(LlmDeepSeek, { baseURL: server.url })
+
+    await assemble(ctx, {
+      model: LlmDeepSeek.SHARED_DEEPSEEK_MODEL,
+      messages: [],
+      sessionId: SessionId('managed-session'),
+    })
+    expect(server.headers[0]?.authorization).toBe('Bearer administrator-key')
+
+    optedIn.value = false
+    await assemble(ctx, {
+      model: LlmDeepSeek.SHARED_DEEPSEEK_MODEL,
+      messages: [],
+      sessionId: SessionId('managed-session'),
+    })
+    expect(server.headers[1]?.authorization).toBe('Bearer personal-key')
+
+    optedIn.value = true
+    await assemble(ctx, {
+      model: 'deepseek-chat',
+      messages: [],
+      sessionId: SessionId('managed-session'),
+    })
+    expect(server.headers[2]?.authorization).toBe('Bearer personal-key')
+  })
+
   it('routes the next request with the freshly resolved base URL and credential', async () => {
     vi.stubEnv('DEEPSEEK_API_KEY', '')
     const dir = await home()
-    await writeFile(join(dir, '.credentials.yaml'), 'DEEPSEEK_API_KEY: first-key\n', { mode: 0o600 })
+    await writeFile(join(dir, '.credentials.yaml'), 'version: 1\nrefs:\n  DEEPSEEK_API_KEY: first-key\n', { mode: 0o600 })
     const serverA = await mockServer([{ kind: 'sse', events: textEvents }])
     const serverB = await mockServer([{ kind: 'sse', events: textEvents }])
     const { ctx } = await boot(dir, { baseURL: serverA.url })
@@ -96,59 +223,6 @@ describe('request-level dynamic configuration', () => {
     await expect(access(join(dir, '.anonymous-user-id'))).resolves.toBeUndefined()
   })
 
-  it('uses the managed key only for opted-in users requesting DeepSeek V4 Flash', async () => {
-    vi.stubEnv('DEEPSEEK_API_KEY', '')
-    vi.stubEnv('HARNESS_TEST_ADMIN_PASSWORD', 'correct horse battery staple')
-    const dir = await home()
-    const server = await mockServer([
-      { kind: 'sse', events: textEvents },
-      { kind: 'sse', events: textEvents },
-      { kind: 'sse', events: textEvents },
-    ])
-    const ctx = new Context()
-    cleanups.push(async () => { await ctx.fiber.dispose() })
-    await ctx.plugin(LlmRuntime)
-    await ctx.plugin(FileSettingsProvider, { path: join(dir, 'settings.yaml'), watch: false })
-    await ctx.plugin(LocalCredentialProvider, { path: join(dir, '.credentials.yaml'), watch: false })
-    await ctx.plugin(FileAuthService, {
-      root: join(dir, 'server'),
-      bootstrapPasswordEnv: 'HARNESS_TEST_ADMIN_PASSWORD',
-    })
-
-    const optedIn = ctx.auth.listUsers()[0]
-    if (optedIn === undefined) throw new Error('bootstrap user missing')
-    const optedOut = await ctx.auth.createLocalUser({
-      username: 'other.user', password: 'a sufficiently long password', role: 'user',
-    })
-    await ctx.auth.setSharedDeepSeekPreference(optedIn.id, true)
-    const optedInProject = join(ctx.auth.userPaths(optedIn.id).projects, 'project-a')
-    const optedOutProject = join(ctx.auth.userPaths(optedOut.id).projects, 'project-b')
-    await Promise.all([mkdir(optedInProject), mkdir(optedOutProject)])
-    const sessionPaths = new Map([
-      [SessionId('opted-in'), optedInProject],
-      [SessionId('opted-out'), optedOutProject],
-    ])
-    ctx.provide('sessions', {
-      get(sessionId: SessionId) {
-        const cwd = sessionPaths.get(sessionId)
-        return cwd === undefined ? undefined : { header: { cwd } }
-      },
-    } as never)
-    await ctx.plugin(LlmDeepSeek, { baseURL: server.url })
-
-    await ctx.credentials.set(KEY_REF, 'personal-key')
-    await ctx.credentials.set(credentialRef(LlmDeepSeek.SHARED_DEEPSEEK_API_KEY_ENV), 'managed-key')
-    await assemble(ctx, { model: 'deepseek-v4-flash', messages: [], sessionId: SessionId('opted-in') })
-    await assemble(ctx, { model: 'deepseek-v4-pro', messages: [], sessionId: SessionId('opted-in') })
-    await assemble(ctx, { model: 'deepseek-v4-flash', messages: [], sessionId: SessionId('opted-out') })
-
-    expect(server.headers.map(headers => headers.authorization)).toEqual([
-      'Bearer managed-key',
-      'Bearer personal-key',
-      'Bearer personal-key',
-    ])
-  })
-
   it('rejects a stored credential no header can carry, never echoing it in the failure', async () => {
     vi.stubEnv('DEEPSEEK_API_KEY', '')
     const dir = await home()
@@ -172,11 +246,42 @@ describe('request-level dynamic configuration', () => {
     const dir = await home()
     const { ctx } = await boot(dir, { baseURL: 'http://127.0.0.1:1' })
 
-    await expect(ctx.llm.listModels('deepseek-official')).resolves.toHaveLength(2)
-    await ctx.settings.update(NS, { models: [{ id: 'settings-model', name: 'From Settings' }] })
+    await expect(ctx.llm.listModels('deepseek-official')).resolves.toHaveLength(3)
+    await ctx.settings.update(NS, {
+      models: [{ id: 'settings-model', name: 'From Settings', inputModalities: ['text', 'image'] }],
+    })
     await expect(ctx.llm.listModels('deepseek-official')).resolves.toEqual([
-      { provider: 'deepseek-official', id: 'settings-model', name: 'From Settings', inputModalities: ['text'] },
+      { provider: 'deepseek-official', id: 'settings-model', name: 'From Settings', inputModalities: ['text', 'image'] },
     ])
+  })
+
+  it('applies changed request file limits to the next request', async () => {
+    vi.stubEnv('DEEPSEEK_API_KEY', 'test-key')
+    const dir = await home()
+    const server = await mockServer([
+      { kind: 'sse', events: textEvents },
+      { kind: 'sse', events: textEvents },
+    ])
+    const { ctx } = await boot(dir, { baseURL: server.url })
+    await ctx.plugin(MappedFileSystem)
+    const messages = [createUserMessage({
+      content: [
+        { type: 'image', attachment: IMAGE_REF },
+        { type: 'image', attachment: IMAGE_REF },
+      ],
+      source: { kind: 'plugin', plugin: 'test' },
+    })]
+
+    await assemble(ctx, { model: 'deepseek-v4-flash-vision-exp', messages })
+    await ctx.settings.update(NS, { maxRequestFilesBytes: 4, imageOffloadByteQuantum: 2 })
+    await assemble(ctx, { model: 'deepseek-v4-flash-vision-exp', messages })
+
+    const first = (server.requests[0] as { messages: Array<{ content: unknown }> }).messages[0]?.content
+    const second = (server.requests[1] as { messages: Array<{ content: unknown }> }).messages[0]?.content
+    expect(JSON.stringify(first).match(/"type":"file"/g)).toHaveLength(2)
+    expect(JSON.stringify(second)).toContain('[image omitted to fit request image limits')
+    expect(JSON.stringify(second)).toContain(MODEL_IMAGE_PATH)
+    expect(JSON.stringify(second).match(/"type":"file"/g)).toHaveLength(1)
   })
 
   it('re-registers the route in place when the captured retry policy changes, without an empty-registry window', async () => {
@@ -211,7 +316,7 @@ describe('request-level dynamic configuration', () => {
     // Schema-valid but resolver-invalid: duplicate catalog ids pass the array
     // schema and fail the explicit resolve step.
     await ctx.settings.update(NS, { models: [{ id: 'dup' }, { id: 'dup' }] })
-    await expect(ctx.llm.listModels('deepseek-official')).resolves.toHaveLength(2)
+    await expect(ctx.llm.listModels('deepseek-official')).resolves.toHaveLength(3)
     await ctx.settings.update(NS, { models: [{ id: 'recovered' }] })
     await expect(ctx.llm.listModels('deepseek-official')).resolves.toEqual([
       { provider: 'deepseek-official', id: 'recovered', name: 'recovered', inputModalities: ['text'] },
@@ -243,7 +348,7 @@ describe('request-level dynamic configuration', () => {
   it('falls back to the composition entry when settings detach', async () => {
     vi.stubEnv('DEEPSEEK_API_KEY', '')
     const dir = await home()
-    await writeFile(join(dir, '.credentials.yaml'), 'DEEPSEEK_API_KEY: steady-key\n', { mode: 0o600 })
+    await writeFile(join(dir, '.credentials.yaml'), 'version: 1\nrefs:\n  DEEPSEEK_API_KEY: steady-key\n', { mode: 0o600 })
     const serverA = await mockServer([{ kind: 'sse', events: textEvents }])
     const serverB = await mockServer([{ kind: 'sse', events: textEvents }])
     const { ctx, settingsFiber } = await boot(dir, { baseURL: serverA.url })

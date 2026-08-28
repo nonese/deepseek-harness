@@ -5,8 +5,47 @@
  * @module @deepseek-ai/dsh-auth
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks'
+import { realpathSync } from 'node:fs'
+import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type { Branded } from '@deepseek-ai/dsh-brand'
+
+/**
+ * Resolve an existing path prefix while retaining a missing suffix.
+ * @param path - managed server path to canonicalize.
+ * @returns symlink-resolved spelling suitable for containment checks.
+ */
+export function canonicalManagedPath(path: string): string {
+  try {
+    return realpathSync.native(path)
+  } catch {
+    // Preserve an existing symlink-sensitive spelling before walking a missing suffix.
+  }
+  let current = resolve(path)
+  const missing: string[] = []
+  while (true) {
+    try {
+      return resolve(realpathSync.native(current), ...missing.reverse())
+    } catch {
+      const parent = dirname(current)
+      if (parent === current) return resolve(path)
+      missing.push(basename(current))
+      current = parent
+    }
+  }
+}
+
+/**
+ * Check whether a candidate remains inside a managed root after symlink resolution.
+ * @param root - owning user or project root.
+ * @param candidate - path claimed by a request or durable record.
+ * @returns whether the candidate is the root or one of its descendants.
+ */
+export function managedPathContains(root: string, candidate: string): boolean {
+  const nested = relative(canonicalManagedPath(root), canonicalManagedPath(candidate))
+  return nested === '' || (!nested.startsWith('..') && !isAbsolute(nested))
+}
 
 /** Stable, path-safe identity. Usernames and display names never select storage paths. */
 export type UserId = Branded<'UserId'>
@@ -131,8 +170,29 @@ declare module '@deepseek-ai/cordis' {
  * session when a user is disabled.
  */
 export abstract class AuthService extends Service {
+  private readonly principals = new AsyncLocalStorage<AuthPrincipal>()
+
   constructor(ctx: Context) {
     super(ctx, 'auth')
+    ctx.effect(() => () => { this.principals.disable() }, 'auth: request-principal context')
+  }
+
+  /**
+   * Read the principal established by the authenticated carrier for this async request.
+   * @returns the current principal, or undefined outside an authenticated request.
+   */
+  currentPrincipal(): AuthPrincipal | undefined {
+    return this.principals.getStore()
+  }
+
+  /**
+   * Run one carrier dispatch with an immutable authenticated principal.
+   * @param principal - identity resolved from the deployment session cookie.
+   * @param operation - request work that may cross asynchronous continuations.
+   * @returns the operation result.
+   */
+  withPrincipal<T>(principal: AuthPrincipal, operation: () => T): T {
+    return this.principals.run(structuredClone(principal), operation)
   }
 
   /**

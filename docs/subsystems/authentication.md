@@ -4,7 +4,7 @@ English | [中文](authentication.zh.md)
 
 [dsh-auth](../../packages/identity/auth) defines the server identity seam. [dsh-auth-file](../../packages/identity/auth-file) keeps users, password verifiers, OIDC identity bindings, and revocable session-token digests in owner-only JSON files, while [dsh-auth-web](../../packages/host/auth-web) maps the seam onto local and OIDC cookie-authenticated HTTP routes. The Web deployment creates one initial administrator from its bootstrap environment, then all later account changes go through an authenticated administrator. Administrators configure OIDC from the system settings page; local login remains available for testing and emergency access.
 
-This seam owns identity and authorization metadata, not project content. A stable random `UserId` selects one program-managed directory tree; username and display-name changes never rename or select storage. The scoped API proxy admits only sessions and workspaces rooted in the authenticated user's `projects` directory. Administrator listing exposes public account metadata only and does not grant access to another user's projects, sessions, attachments, credentials, or settings.
+This seam owns identity and authorization metadata, not project content. A stable random `UserId` selects one program-managed directory tree; username and display-name changes never rename or select storage. The Web deployment registers one Connection authenticator that validates the durable cookie and runs dispatch with a request-scoped principal. An ordered Typert Gateway middleware then admits only sessions and workspaces rooted in that principal's `projects` directory and applies the same projection to unary results and streams. Administrator listing exposes public account metadata only and does not grant access to another user's projects, sessions, attachments, credentials, or settings.
 
 Source: [`packages/identity/auth/src/index.ts`](../../packages/identity/auth/src/index.ts)
 
@@ -51,7 +51,7 @@ The administrator saves these non-secret fields through `PUT /auth/system/oidc`.
 
 `GET /auth/oidc/start` discovers the provider, creates a PKCE S256 verifier and challenge, and binds random state and nonce values to a ten-minute transient browser cookie and an in-memory pending flow. The callback consumes that state once, exchanges the authorization code, and requires a signed ID Token whose issuer, audience, expiry, issued-at time, nonce, and JWKS key are valid. The provider's `groups` claim supplies only the configured first-login administrator-group decision; `perm:` entries are not Harness permissions.
 
-The file provider stores `(issuer, sub) → UserId` in `<DSH_HOME>/server/system/auth/oidc.json`. That immutable pair is the only automatic account-link key. A preferred username collision creates a suffixed OIDC username instead of linking or overwriting the local account. The configured administrator group selects the role only when a new OIDC identity is created; later role changes remain under Harness administrator control.
+The Web deployment stores `(issuer, sub) → UserId` in `<DSH_HOME>/system/auth/oidc.json`. That immutable pair is the only automatic account-link key. A preferred username collision creates a suffixed OIDC username instead of linking or overwriting the local account. The configured administrator group selects the role only when a new OIDC identity is created; later role changes remain under Harness administrator control.
 
 ## Shared DeepSeek credential choice
 
@@ -62,7 +62,7 @@ interface SharedDeepSeekPreference {
 }
 ```
 
-The file provider persists this choice as user-id metadata in `<DSH_HOME>/server/system/auth/preferences.json`; it never stores the key there. The administrator-managed key remains in the ordinary credentials provider under `HARNESS_SHARED_DEEPSEEK_API_KEY`. The DeepSeek adapter uses it only for `deepseek-official` / `deepseek-v4-flash` calls whose live session path belongs to an active opted-in user; every other call follows the configured `apiKeyEnv` path.
+The Web deployment persists this choice as user-id metadata in `<DSH_HOME>/system/auth/preferences.json`; it never stores the key there. The administrator-managed key remains in the ordinary credentials provider under `HARNESS_SHARED_DEEPSEEK_API_KEY`. The DeepSeek adapter uses it only for `deepseek-official` / `deepseek-v4-flash` calls whose live session path belongs to an active opted-in user; every other call follows the configured `apiKeyEnv` path.
 
 ## Browser sessions
 
@@ -101,7 +101,7 @@ interface UserPaths {
 }
 ```
 
-The file provider materializes these roles beneath `<DSH_HOME>/server/users/<UserId>/`. The application chooses project paths under `projects`; the user never supplies an arbitrary server path. Existing Harness persistence providers remain unchanged and write into the authenticated user's roots, preserving the file-backed storage model without introducing a database.
+The Web deployment materializes these roles beneath `<DSH_HOME>/users/<UserId>/`. The application chooses project paths under `projects`; the user never supplies an arbitrary server path. Existing Harness persistence providers remain unchanged and write into the authenticated user's roots, preserving the file-backed storage model without introducing a database.
 
 ## Administrator mutations
 
@@ -128,7 +128,7 @@ Only an authenticated administrator can list users or create, edit, disable, and
 
 ## Plugin authority
 
-Plugins declared by the deployment run in the shared Host process and affect every user, so their configuration is an administrator responsibility. The authenticated API view removes the shipped `cordis` preset from ordinary-user rosters and rejects ordinary session creation or preset selection that names it. A Host guard separately rejects every `cordis_*` tool call unless the current owner of the calling Agent's managed project path is an administrator, and the Connection carrier rejects the `dynamicCordisRunner/*` Remote namespace for non-administrators before dispatch. These independent checks keep a stale client, a forged request, or an already-open session from turning UI visibility into authority.
+Plugins declared by the deployment run in the shared Host process and affect every user, so their configuration is an administrator responsibility. The authenticated Gateway middleware removes the shipped `@deepseek-ai/cordis` preset from ordinary-user rosters and rejects ordinary session creation or preset selection that names it. A Host guard separately rejects every `cordis_*` tool call unless the current owner of the calling Agent's managed project path is an administrator, and the same Gateway middleware rejects the `dynamicCordisRunner/*` Remote namespace before dispatch. These independent checks keep a stale client, a forged request, or an already-open session from turning UI visibility into authority.
 
 Installing an npm package inside one user's project changes only that user's project files. It does not load the package into Cordis, register a Host plugin, or affect another user's runtime. A package affects all users only after an administrator adds it to the shared deployment composition; the configured Host plugin is then part of the trusted process-wide runtime.
 
@@ -138,7 +138,7 @@ Installing an npm package inside one user's project changes only that user's pro
 
 ## Cordis API
 
-Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — this section is byte-identical in both language sides of the page. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
+Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — the language sides differ only in locale-specific paired document paths. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
 
 <a id="ctxauth--authservice-abstract-seam"></a>
 
@@ -147,6 +147,20 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
 Authentication Service Definition. Implementations must compare passwords without early exits, persist only session-token digests, and revoke every session when a user is disabled.
 
 ```ts cordis-catalog
+/**
+ * Read the principal established by the authenticated carrier for this async request.
+ * @returns the current principal, or undefined outside an authenticated request.
+ */
+currentPrincipal(): AuthPrincipal | undefined
+
+/**
+ * Run one carrier dispatch with an immutable authenticated principal.
+ * @param principal - identity resolved from the deployment session cookie.
+ * @param operation - request work that may cross asynchronous continuations.
+ * @returns the operation result.
+ */
+withPrincipal<T>(principal: AuthPrincipal, operation: () => T): T
+
 /**
  * Resolve an opaque cookie token into an active principal.
  * @param token - raw opaque browser token from the cookie.
@@ -266,5 +280,5 @@ abstract ensureUserPaths(userId: UserId): Promise<UserPaths>
 abstract userPaths(userId: UserId): UserPaths
 ```
 
-Source: [`packages/identity/auth/src/index.ts:133`](../../packages/identity/auth/src/index.ts)
+Source: [`packages/identity/auth/src/index.ts`](../../packages/identity/auth/src/index.ts)
 <!-- END GENERATED cordis-surface -->

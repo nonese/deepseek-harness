@@ -1,18 +1,66 @@
+---
+description: "面向 Harness Web 服务端的同源本地与 OIDC 登录、浏览器会话授权、管理员控制、用户项目创建与统一模型偏好。"
+kind: "package-reference"
+---
+
 # @deepseek-ai/dsh-host-auth-web
 
 [English](README.md) | 中文
 
-Harness 登录页、本地与 OIDC 浏览器会话、用户管理与程序化项目创建所使用的同源 HTTP 路由。
+## 概述
 
-## 路由
+使用本包可把 Harness Web 组合变成登录后才能访问的单进程多用户服务。它提供本地与 OIDC 登录路由、持久浏览器会话授权、管理员控制、用户项目创建，以及用户是否启用管理员统一 DeepSeek 凭据的选择。普通用户只能获得自己的会话、workspace、项目与事件流；管理员命名空间和动态 Cordis 变更仍仅限管理员。
+
+## 目录
+
+- [使用本包](#use-this-package)
+- [理解实现](#understand-the-implementation)
+- [进一步探索](#further-exploration)
+- [模型体验](#model-experience)
+- [已知限制与暂缓工作](#known-limitations-and-deferred-work)
+- [开发备注](#dev-note)
+
+-----
+
+<a id="use-this-package"></a>
+## 使用本包
+
+### 路由
 
 `GET /auth/session`、`POST /auth/login/local`、`GET /auth/oidc/start`、`GET /auth/oidc/callback` 与 `POST /auth/logout` 管理浏览器会话。OIDC 使用 Authorization Code、PKCE S256、state、nonce、提供方发现，以及通过轮换 JWKS 完成的签名 ID Token 验证。待完成流程只保存在进程内存中，生命周期为十分钟，并绑定一个匹配的 `HttpOnly`、`SameSite=Lax` 临时 Cookie；回调重放不能再次签发会话。已认证用户只能列出并创建自己生成数据根目录下的项目。`GET` 与 `PATCH /auth/preferences` 只公开和修改当前用户是否启用统一 DeepSeek 凭据；管理员凭据不存在时，启用操作会失败。
 
 管理员可以读取实际生效的进程、存储、认证、隔离、请求限制与统一模型状态，列出用户元数据，创建本地用户，修改角色或状态并重置本地密码。`PUT /auth/system/oidc` 保存 issuer、client id、redirect URI、scopes、客户端鉴权方式、可选的内网 HTTP 例外和首次登录管理员组。提交的客户端密钥通过现有 credentials 提供方写入 `HARNESS_OIDC_CLIENT_SECRET`，绝不回传。`POST /auth/system/oidc/test` 在不签发令牌的前提下验证已保存的发现文档。`PUT` 与 `DELETE /auth/system/shared-deepseek` 用于替换或移除专用统一模型凭据。管理响应只公开是否配置和是否可写，绝不返回提交或已存储的密钥，也不会返回用户项目或会话内容。
 
-在已认证的 Web 组合中，本插件还会为所有 `cordis_*` 工具注册单调执行守卫。守卫在每次调用时都会从调用 Agent 的程序管理项目路径解析当前所有者，只有该所有者当时仍是管理员才会调用工具主体。没有 Agent、没有受管所有者、所有者为普通用户或已被降级的调用都会在工具主体前失败。Preset 与 Remote runner 的准入另由作用域 API 代理和 Connection 载体独立执行。
+在已认证的 Web 组合中，本插件会注册唯一的 Connection 认证器和有序 Typert Gateway 中间件。认证器校验持久 Cookie，并为 HTTP 与 WebSocket 分发提供请求主体；中间件过滤用户拥有的会话、workspace、Host 信息、列表与 stream，并拒绝普通用户访问管理员命名空间。独立的单调执行守卫保护每个 `cordis_*` 工具：它在每次调用时从调用 Agent 的程序管理项目路径解析当前所有者；没有 Agent、没有受管所有者、所有者为普通用户或已被降级的调用都会在工具主体前失败。
 
 不透明 Cookie 使用 `HttpOnly` 和 `SameSite=Lax`，并可启用 `Secure`。可变更路由会拒绝不匹配的 `Origin`、限制 JSON 请求体大小并返回稳定错误码。issuer 和回调地址默认必须使用 HTTPS，只有管理员显式启用纯内网 HTTP 例外后才可使用 HTTP。OIDC 声明只通过已验证的 issuer 与 subject 创建或恢复账号；首选用户名不能接管已有本地账号。配置的管理员组只在外部身份首次创建时生效，此后的角色变更由 Harness 管理员负责。
+
+-----
+
+<a id="understand-the-implementation"></a>
+## 理解实现
+
+<details>
+<summary>实现细节——点击展开</summary>
+
+部署认证器在 HTTP 或 WebSocket RPC 分发前验证 Cookie，并在认证服务的异步上下文中建立所得 `AuthPrincipal`。有序 Typert 中间件对普通调用、流与事件跟随分别执行方法级所有权过滤。工具策略会在实际执行时再次解析所有权，防止角色降级或项目所有者变化后复用旧的准入结果。
+
+</details>
+
+-----
+
+<a id="further-exploration"></a>
+## 进一步探索
+
+- [认证子系统](../../../docs/subsystems/authentication.zh.md)——全服务的身份、会话、存储与授权行为。
+- [auth](../../identity/auth/README.zh.md)——请求主体与用户路径定义。
+- [auth-file](../../identity/auth-file/README.zh.md)——持久用户、会话、OIDC 绑定与偏好。
+- [Connection](../../client/connection/README.zh.md)——传输分发前的部署认证。
+- [Gateway](../../api/gateway/README.zh.md)——有序 RPC 授权中间件。
+
+-----
+
+<a id="model-experience"></a>
 
 ## 模型体验
 
@@ -32,5 +80,17 @@ Harness 登录页、本地与 OIDC 浏览器会话、用户管理与程序化项
 
 ## 已知限制与暂缓工作
 
+<a id="known-limitations-and-deferred-work"></a>
+
 - 身份提供方没有 end-session 或令牌撤销端点，因此 Harness 退出只撤销本地浏览器会话，不会同时退出上游身份提供方。
 - 终止 TLS 的部署必须启用 `secureCookie`。
+
+<a id="dev-note"></a>
+### 开发备注
+
+<details>
+<summary>维护者的工作上下文——点击展开</summary>
+
+无。
+
+</details>

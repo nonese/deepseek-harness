@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import { HarnessPortal } from '@deepseek-ai/dsh-client-web/src/HarnessPortal.tsx'
 import type { ClientAuthUser } from '@deepseek-ai/dsh-client-web/src/auth-state.ts'
+import { zh, type WebCopyKey } from '@deepseek-ai/dsh-client-web/src/locales.ts'
 
 afterEach(() => {
   cleanup()
@@ -31,6 +32,7 @@ function mount(user: ClientAuthUser) {
   const result = render(
     <HarnessPortal
       user={user}
+      t={(key: WebCopyKey) => zh[key]}
       renderRuntime={renderRuntime}
       openWorkspace={() => {}}
       startSession={() => {}}

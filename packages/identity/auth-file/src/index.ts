@@ -4,15 +4,15 @@
  */
 
 import { createHash, randomBytes, randomUUID, scrypt as nodeScrypt, timingSafeEqual } from 'node:crypto'
-import { realpathSync } from 'node:fs'
 import { chmod, mkdir, readFile, stat } from 'node:fs/promises'
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import {
   AuthError,
   AuthService,
+  managedPathContains,
   type AuthMethod,
   type AuthPrincipal,
   type AuthUser,
@@ -95,6 +95,8 @@ export interface Config {
   bootstrapUsername?: string
   /** Environment variable carrying the initial administrator password. */
   bootstrapPasswordEnv?: string
+  /** Create the initial administrator when storage has no users. Defaults to true. */
+  bootstrapAdministrator?: boolean
 }
 
 interface ResolvedConfig {
@@ -102,6 +104,7 @@ interface ResolvedConfig {
   sessionTtlMs: number
   bootstrapUsername: string
   bootstrapPasswordEnv: string
+  bootstrapAdministrator: boolean
 }
 
 /** Stable Cordis plugin name. */
@@ -116,6 +119,7 @@ function resolvedConfig(config: Config): ResolvedConfig {
     sessionTtlMs: (config.sessionTtlHours ?? 12) * 60 * 60 * 1000,
     bootstrapUsername: config.bootstrapUsername ?? 'admin',
     bootstrapPasswordEnv: config.bootstrapPasswordEnv ?? 'HARNESS_BOOTSTRAP_PASSWORD',
+    bootstrapAdministrator: config.bootstrapAdministrator ?? true,
   }
 }
 
@@ -204,21 +208,34 @@ function scrypt(password: string, salt: Buffer): Promise<Buffer> {
   })
 }
 
+function encodeBase64Url(value: Uint8Array): string {
+  return Buffer.from(value).toString('base64')
+    .replaceAll('+', '-')
+    .replaceAll('/', '_')
+    .replace(/=+$/u, '')
+}
+
+function decodeBase64Url(value: string): Buffer {
+  const base64 = value.replaceAll('-', '+').replaceAll('_', '/')
+  const padding = (4 - (base64.length % 4)) % 4
+  return Buffer.from(`${base64}${'='.repeat(padding)}`, 'base64')
+}
+
 async function hashPassword(password: string): Promise<PasswordRecord> {
   validatePassword(password)
   const salt = randomBytes(PASSWORD_SALT_BYTES)
   const digest = await scrypt(password, salt)
   return {
     algorithm: 'scrypt-v1',
-    salt: salt.toString('base64url'),
-    digest: digest.toString('base64url'),
+    salt: encodeBase64Url(salt),
+    digest: encodeBase64Url(digest),
   }
 }
 
 async function verifyPassword(password: string, stored: PasswordRecord): Promise<boolean> {
   if (stored.algorithm !== 'scrypt-v1') return false
-  const expected = Buffer.from(stored.digest, 'base64url')
-  const actual = await scrypt(password, Buffer.from(stored.salt, 'base64url'))
+  const expected = decodeBase64Url(stored.digest)
+  const actual = await scrypt(password, decodeBase64Url(stored.salt))
   return expected.length === actual.length && timingSafeEqual(expected, actual)
 }
 
@@ -229,31 +246,6 @@ function publicUser(user: StoredUser): AuthUser {
 
 function isENOENT(error: unknown): boolean {
   return (error as NodeJS.ErrnoException | null)?.code === 'ENOENT'
-}
-
-function canonicalPath(path: string): string {
-  try {
-    return realpathSync.native(path)
-  } catch {
-    // Keep the existing ancestor's canonical spelling while walking a missing suffix.
-  }
-  let current = resolve(path)
-  const missing: string[] = []
-  while (true) {
-    try {
-      return resolve(realpathSync.native(current), ...missing.reverse())
-    } catch {
-      const parent = dirname(current)
-      if (parent === current) return resolve(path)
-      missing.push(basename(current))
-      current = parent
-    }
-  }
-}
-
-function pathWithin(root: string, candidate: string): boolean {
-  const nested = relative(canonicalPath(root), canonicalPath(candidate))
-  return nested === '' || (!nested.startsWith('..') && !isAbsolute(nested))
 }
 
 async function readJson<T>(filename: string, fallback: T): Promise<T> {
@@ -284,6 +276,7 @@ export class FileAuthService extends AuthService {
     sessionTtlHours: z.number().min(1).max(24 * 30).default(12),
     bootstrapUsername: z.string().default('admin'),
     bootstrapPasswordEnv: z.string().default('HARNESS_BOOTSTRAP_PASSWORD'),
+    bootstrapAdministrator: z.boolean().default(true),
   })
 
   private readonly spec: ResolvedConfig
@@ -362,7 +355,7 @@ export class FileAuthService extends AuthService {
       throw new Error('auth-file: OIDC identity references a missing user')
     }
     await this.removeExpiredSessions()
-    if (this.users.length === 0) await this.bootstrapAdministrator()
+    if (this.users.length === 0 && this.spec.bootstrapAdministrator) await this.bootstrapAdministrator()
     await Promise.all(this.users.map(user => this.ensureUserPaths(user.id)))
   }
 
@@ -394,7 +387,7 @@ export class FileAuthService extends AuthService {
       throw new AuthError('INVALID_CREDENTIALS', '用户名或密码不正确')
     }
     if (user.status !== 'active') throw new AuthError('USER_DISABLED', '此账号已被停用')
-    const token = randomBytes(SESSION_TOKEN_BYTES).toString('base64url')
+    const token = encodeBase64Url(randomBytes(SESSION_TOKEN_BYTES))
     const now = new Date()
     const storedSession: StoredSession = {
       id: randomUUID(),
@@ -414,7 +407,7 @@ export class FileAuthService extends AuthService {
   }
 
   override async loginOidc(input: OidcLoginInput): Promise<IssuedAuthSession> {
-    const token = randomBytes(SESSION_TOKEN_BYTES).toString('base64url')
+    const token = encodeBase64Url(randomBytes(SESSION_TOKEN_BYTES))
     const now = new Date()
     let issued: IssuedAuthSession | undefined
     await this.enqueue(async () => {
@@ -587,7 +580,7 @@ export class FileAuthService extends AuthService {
   }
 
   override ownerForProjectPath(path: string): AuthUser | undefined {
-    const owner = this.users.find(user => pathWithin(this.userPaths(user.id).projects, path))
+    const owner = this.users.find(user => managedPathContains(this.userPaths(user.id).projects, path))
     return owner === undefined ? undefined : publicUser(owner)
   }
 
@@ -632,13 +625,13 @@ export class FileAuthService extends AuthService {
   }
 
   private digestToken(token: string): string {
-    return createHash('sha256').update(token).digest('base64url')
+    return encodeBase64Url(createHash('sha256').update(token).digest())
   }
 
   private async bootstrapAdministrator(): Promise<void> {
     const username = validateUsername(this.spec.bootstrapUsername)
     const configured = process.env[this.spec.bootstrapPasswordEnv]
-    const password = configured ?? randomBytes(18).toString('base64url')
+    const password = configured ?? encodeBase64Url(randomBytes(18))
     const user: StoredUser = {
       id: randomUUID() as UserId,
       username,

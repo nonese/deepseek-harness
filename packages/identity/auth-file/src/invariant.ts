@@ -11,7 +11,7 @@ export const name = 'auth-file-invariant'
 /** Service required before the companion can reserve package ownership. */
 export const inject = ['invariants']
 
-/** Durable authentication relations are covered by provider composition tests. */
+/** No runtime invariant: durable authentication relations are covered by provider composition tests. */
 const install: InvariantInstaller = () => {}
 
 /** Register this package's invariant companion. */

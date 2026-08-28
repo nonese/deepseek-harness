@@ -11,7 +11,7 @@ export const name = 'auth-invariant'
 /** Service required before the companion can reserve package ownership. */
 export const inject = ['invariants']
 
-/** Provider-specific persistence invariants are checked by provider tests. */
+/** No runtime invariant: provider-specific persistence relations are checked by provider tests. */
 const install: InvariantInstaller = () => {}
 
 /** Register this package's invariant companion. */

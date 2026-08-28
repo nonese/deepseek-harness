@@ -19,7 +19,8 @@
  * @module @deepseek-ai/dsh-tool-fs-search/search-core
  */
 
-import { isAbsolute, relative, sep } from 'node:path'
+import { existsSync } from 'node:fs'
+import { isAbsolute, join, parse, relative, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { HarnessError } from '@deepseek-ai/dsh-llm'
 import { ItemRetainer, TextRetainer } from '@deepseek-ai/dsh-output-retention'
@@ -155,23 +156,34 @@ function completeStdout(toolName: string, stdout: SubprocessOutputRead, rawOutpu
   )
 }
 
+/** Read a mutable AbortSignal without extending a caller's earlier narrowing. */
+function signalIsAborted(signal: AbortSignal): boolean {
+  return signal.aborted
+}
+
 let rgPathPromise: Promise<string> | undefined
 
 /**
  * The packaged ripgrep binary path, resolved lazily once per process.
  *
- * `@vscode/ripgrep` resolves its platform package (`@vscode/ripgrep-<platform>
- * -<arch>`) at module evaluation, so a static import would turn a missing or
- * corrupt platform package (`pnpm install --omit=optional`, partial install)
- * into a failure of the whole Loader composition. Resolving at the call
- * boundary keeps that failure at the first search call as `SEARCH_FAILED` —
- * the package's documented no-load-time-probe contract.
+ * A single-file runtime uses the executable's `-rg` sidecar because a native
+ * helper cannot be spawned from pkg's virtual filesystem. Node-mode builds
+ * fall back to the platform package selected by `@vscode/ripgrep`. Resolving
+ * at the call boundary keeps a missing or corrupt binary at the first search
+ * call as `SEARCH_FAILED`, rather than failing the Loader composition.
  *
  * @returns the packaged binary's absolute path; the memoized promise rejects
  *   when the platform package cannot be resolved.
  */
 export function resolveRgPath(): Promise<string> {
-  rgPathPromise ??= import('@vscode/ripgrep').then(module => module.rgPath)
+  rgPathPromise ??= Promise.resolve().then(async () => {
+    const executable = parse(process.execPath)
+    const executableSidecar = process.platform === 'win32'
+      ? join(executable.dir, `${executable.name}-rg.exe`)
+      : `${process.execPath}-rg`
+    if ('pkg' in process && existsSync(executableSidecar)) return executableSidecar
+    return (await import('@vscode/ripgrep')).rgPath
+  })
   return rgPathPromise
 }
 
@@ -257,7 +269,7 @@ export async function runRipgrep(
     // above and this call (or when the platform-package resolution rejects).
     // The static narrowing that proves this re-check "always false" cannot
     // see AbortSignal state changes.
-    if (exec.signal.aborted) {
+    if (signalIsAborted(exec.signal)) {
       throw new SearchError(`${toolName} was aborted before completion (tool timeout or caller cancellation)`, 'SEARCH_ABORTED')
     }
     throw new SearchError(`${toolName} could not start its search command (ripgrep launch failed)`, 'SEARCH_FAILED', { cause: error })
@@ -275,7 +287,7 @@ export async function runRipgrep(
   }
   // The signal can abort while the spawn is awaited; the static narrowing that
   // proves this re-check "always false" cannot see AbortSignal state changes.
-  if (exec.signal.aborted) {
+  if (signalIsAborted(exec.signal)) {
     throw new SearchError(`${toolName} was aborted before completion (tool timeout or caller cancellation)`, 'SEARCH_ABORTED')
   }
   if (outcome.signal !== null || outcome.exitCode === null) {

@@ -8,6 +8,7 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ClientAuthUser } from './auth-state.ts'
 import css from './HarnessPortal.module.css'
+import type { WebTranslate } from './locales.ts'
 
 interface ProjectView {
   id: string
@@ -142,31 +143,42 @@ async function jsonRequest<T>(path: string, init?: RequestInit): Promise<T> {
   })
   const body: unknown = await response.json().catch(() => ({}))
   if (!response.ok) {
-    const message = (body as ApiErrorBody).error?.message ?? `请求失败（${String(response.status)}）`
+    const message = (body as ApiErrorBody).error?.message ?? String(response.status)
     throw new Error(message)
   }
   return body as T
 }
 
-function relativeTime(timestamp: number | string | undefined): string {
-  if (timestamp === undefined) return '尚未登录'
+function relativeTime(timestamp: number | string | undefined, t: WebTranslate): string {
+  if (timestamp === undefined) return t('time.never')
   const time = typeof timestamp === 'number' ? timestamp : Date.parse(timestamp)
   const delta = Date.now() - time
-  if (!Number.isFinite(delta) || delta < 0) return '刚刚'
+  if (!Number.isFinite(delta) || delta < 0) return t('time.now')
   const minutes = Math.floor(delta / 60_000)
-  if (minutes < 1) return '刚刚'
-  if (minutes < 60) return `${String(minutes)} 分钟前`
+  if (minutes < 1) return t('time.now')
+  if (minutes < 60) return t('time.minutesAgo', { count: minutes })
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${String(hours)} 小时前`
+  if (hours < 24) return t('time.hoursAgo', { count: hours })
   const days = Math.floor(hours / 24)
-  return days < 30 ? `${String(days)} 天前` : new Date(time).toLocaleDateString('zh-CN')
+  return days < 30 ? t('time.daysAgo', { count: days }) : new Date(time).toLocaleDateString()
 }
 
 type PortalView = 'projects' | 'runtime' | 'settings' | 'admin' | 'system'
 
+const PORTAL_VIEWS = new Set<PortalView>(['projects', 'runtime', 'settings', 'admin', 'system'])
+
+function initialPortalView(): PortalView {
+  if (typeof location === 'undefined') return 'projects'
+  const requested = new URLSearchParams(location.search).get('view')
+  return requested !== null && PORTAL_VIEWS.has(requested as PortalView)
+    ? requested as PortalView
+    : 'projects'
+}
+
 /** Authenticated product shell for project entry and user administration. */
 export interface HarnessPortalProps {
   user: ClientAuthUser
+  t: WebTranslate
   renderRuntime(): ReactNode
   openWorkspace(workspaceId: string): void
   startSession(workspaceId?: string): void
@@ -174,12 +186,23 @@ export interface HarnessPortalProps {
 }
 
 export function HarnessPortal(props: HarnessPortalProps) {
-  const [view, setView] = useState<PortalView>('projects')
+  const { t } = props
+  const [view, setView] = useState<PortalView>(initialPortalView)
   const [projects, setProjects] = useState<ProjectView[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
   const [creating, setCreating] = useState(false)
   const [projectName, setProjectName] = useState('')
+
+  const selectView = useCallback((next: PortalView): void => {
+    if (typeof location !== 'undefined') {
+      const url = new URL(location.href)
+      if (next === 'projects') url.searchParams.delete('view')
+      else url.searchParams.set('view', next)
+      history.replaceState(history.state, '', url)
+    }
+    setView(next)
+  }, [])
 
   const refreshProjects = useCallback(async (): Promise<void> => {
     setLoading(true)
@@ -198,7 +221,7 @@ export function HarnessPortal(props: HarnessPortalProps) {
 
   const openProject = (project: ProjectView): void => {
     props.openWorkspace(project.id)
-    setView('runtime')
+    selectView('runtime')
   }
 
   const newSession = (): void => {
@@ -208,7 +231,7 @@ export function HarnessPortal(props: HarnessPortalProps) {
       return
     }
     props.startSession(first.id)
-    setView('runtime')
+    selectView('runtime')
   }
 
   const createProject = (event: FormEvent): void => {
@@ -231,8 +254,8 @@ export function HarnessPortal(props: HarnessPortalProps) {
   if (view === 'runtime') {
     return (
       <div className={css.runtime}>
-        <button className={css.returnButton} type="button" onClick={() => { setView('projects') }}>
-          返回我的项目
+        <button className={css.returnButton} type="button" onClick={() => { selectView('projects') }}>
+          {t('nav.backProjects')}
         </button>
         <div className={css.runtimeBody}>{props.renderRuntime()}</div>
       </div>
@@ -243,17 +266,17 @@ export function HarnessPortal(props: HarnessPortalProps) {
   return (
     <div className={css.shell}>
       <aside className={css.sidebar}>
-        <div className={css.wordmark}>Harness</div>
-        <button className={css.newSession} type="button" onClick={newSession}><IconNewChatOutline16 size={18} />新建会话</button>
-        <nav aria-label="主导航">
-          <button className={view === 'projects' ? css.navActive : css.navItem} type="button" onClick={() => { setView('projects') }}><IconFolderClose16 size={18} />项目</button>
-          <button className={css.navItem} type="button" onClick={() => { setView('runtime') }}><IconNewChatOutline16 size={18} />会话</button>
-          <button className={view === 'settings' ? css.navActive : css.navItem} type="button" onClick={() => { setView('settings') }}><IconSettingsOutline16 size={18} />设置</button>
+        <div className={css.wordmark}>{t('brand.name')}</div>
+        <button className={css.newSession} type="button" onClick={newSession}><IconNewChatOutline16 size={18} />{t('nav.newSession')}</button>
+        <nav aria-label={t('nav.aria')}>
+          <button className={view === 'projects' ? css.navActive : css.navItem} type="button" onClick={() => { selectView('projects') }}><IconFolderClose16 size={18} />{t('nav.projects')}</button>
+          <button className={css.navItem} type="button" onClick={() => { selectView('runtime') }}><IconNewChatOutline16 size={18} />{t('nav.sessions')}</button>
+          <button className={view === 'settings' ? css.navActive : css.navItem} type="button" onClick={() => { selectView('settings') }}><IconSettingsOutline16 size={18} />{t('preferences.title')}</button>
           {admin && (
             <div className={css.adminNav}>
-              <div className={css.navLabel}>管理</div>
-              <button className={view === 'admin' ? css.navActive : css.navItem} type="button" onClick={() => { setView('admin') }}><IconUserOutline16 size={18} />用户管理</button>
-              <button className={view === 'system' ? css.navActive : css.navItem} type="button" onClick={() => { setView('system') }}><IconSettingsOutline16 size={18} />系统设置</button>
+              <div className={css.navLabel}>{t('nav.management')}</div>
+              <button className={view === 'admin' ? css.navActive : css.navItem} type="button" onClick={() => { selectView('admin') }}><IconUserOutline16 size={18} />{t('users.title')}</button>
+              <button className={view === 'system' ? css.navActive : css.navItem} type="button" onClick={() => { selectView('system') }}><IconSettingsOutline16 size={18} />{t('system.title')}</button>
             </div>
           )}
         </nav>
@@ -261,60 +284,60 @@ export function HarnessPortal(props: HarnessPortalProps) {
           <div className={css.avatar}>{props.user.displayName.slice(0, 1).toUpperCase()}</div>
           <div className={css.accountText}>
             <strong>{props.user.displayName}</strong>
-            <span>{admin ? '管理员' : '普通用户'}</span>
+            <span>{admin ? t('role.admin') : t('role.user')}</span>
           </div>
-          <button type="button" onClick={() => { void props.onLogout() }}>退出</button>
+          <button type="button" onClick={() => { void props.onLogout() }}>{t('action.logout')}</button>
         </div>
       </aside>
 
       {view === 'admin' && admin
-        ? <AdminView currentUser={props.user} />
+        ? <AdminView currentUser={props.user} t={t} />
         : view === 'system' && admin
-          ? <SystemSettingsView />
+          ? <SystemSettingsView t={t} />
           : view === 'settings'
-            ? <UserSettingsView />
+            ? <UserSettingsView t={t} />
             : (
               <main className={css.main}>
                 <header className={css.pageHeader}>
                   <div>
-                    <h1>我的项目</h1>
-                    <p>打开已有项目或创建新的个人项目。</p>
+                    <h1>{t('projects.title')}</h1>
+                    <p>{t('projects.lead')}</p>
                   </div>
-                  <button className={css.primaryButton} type="button" onClick={() => { setCreating(true) }}>新建项目</button>
+                  <button className={css.primaryButton} type="button" onClick={() => { setCreating(true) }}>{t('projects.new')}</button>
                 </header>
 
-                <div className={css.infoStrip}>项目将自动保存在你的个人空间中，服务器目录由 Harness 统一管理。</div>
+                <div className={css.infoStrip}>{t('projects.managedNotice')}</div>
                 {error !== undefined && <div className={css.pageError} role="alert">{error}</div>}
 
                 <section className={css.section} aria-labelledby="project-list-title">
-                  <h2 id="project-list-title">最近使用</h2>
+                  <h2 id="project-list-title">{t('projects.recent')}</h2>
                   <div className={css.projectList}>
-                    {loading && <div className={css.empty}>正在读取项目…</div>}
-                    {!loading && projects.length === 0 && <div className={css.empty}>还没有项目。新建一个项目后即可开始会话。</div>}
+                    {loading && <div className={css.empty}>{t('projects.loading')}</div>}
+                    {!loading && projects.length === 0 && <div className={css.empty}>{t('projects.empty')}</div>}
                     {projects.map(project => (
                       <button className={css.projectRow} type="button" key={project.id} onClick={() => { openProject(project) }}>
                         <span className={css.projectMark}><IconFolderClose16 size={20} /></span>
                         <span className={css.projectMain}>
                           <strong>{project.name}</strong>
-                          <span>自动管理 · {project.sessionCount} 个会话</span>
+                          <span>{t('projects.autoManaged')} {project.sessionCount} {t('projects.sessionCount')}</span>
                         </span>
-                        <span className={css.projectTime}>{relativeTime(project.updatedAt)}</span>
-                        <span className={css.openText}>打开 <IconChevronRightOutline14 size={14} /></span>
+                        <span className={css.projectTime}>{relativeTime(project.updatedAt, t)}</span>
+                        <span className={css.openText}>{t('action.open')} <IconChevronRightOutline14 size={14} /></span>
                       </button>
                     ))}
                   </div>
                 </section>
 
                 <section className={css.section} aria-labelledby="recent-title">
-                  <h2 id="recent-title">最近会话</h2>
+                  <h2 id="recent-title">{t('projects.recentSessions')}</h2>
                   <div className={css.recentGrid}>
                     {projects.filter(project => project.sessionCount > 0).slice(0, 3).map(project => (
                       <button type="button" key={project.id} onClick={() => { openProject(project) }}>
                         <strong>{project.name}</strong>
-                        <span>{project.sessionCount} 个会话 · {relativeTime(project.updatedAt)}</span>
+                        <span>{project.sessionCount} {t('projects.sessionCountSeparator')} {relativeTime(project.updatedAt, t)}</span>
                       </button>
                     ))}
-                    {!loading && projects.every(project => project.sessionCount === 0) && <span className={css.muted}>暂无会话</span>}
+                    {!loading && projects.every(project => project.sessionCount === 0) && <span className={css.muted}>{t('projects.noSessions')}</span>}
                   </div>
                 </section>
               </main>
@@ -325,15 +348,15 @@ export function HarnessPortal(props: HarnessPortalProps) {
           if (event.currentTarget === event.target) setCreating(false)
         }}>
           <form className={css.modal} onSubmit={createProject}>
-            <h2>新建项目</h2>
-            <p>Harness 会自动分配并创建私有项目目录。</p>
+            <h2>{t('projects.new')}</h2>
+            <p>{t('projects.dialogLead')}</p>
             <label>
-              <span>项目名称</span>
+              <span>{t('projects.name')}</span>
               <input value={projectName} onChange={(event) => { setProjectName(event.target.value) }} autoFocus maxLength={80} />
             </label>
             <div className={css.modalActions}>
-              <button type="button" onClick={() => { setCreating(false) }}>取消</button>
-              <button className={css.primaryButton} type="submit">创建项目</button>
+              <button type="button" onClick={() => { setCreating(false) }}>{t('action.cancel')}</button>
+              <button className={css.primaryButton} type="submit">{t('projects.create')}</button>
             </div>
           </form>
         </div>
@@ -342,7 +365,7 @@ export function HarnessPortal(props: HarnessPortalProps) {
   )
 }
 
-function UserSettingsView() {
+function UserSettingsView({ t }: { t: WebTranslate }) {
   const [preference, setPreference] = useState<PreferencesResponse['sharedDeepSeek']>()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -372,7 +395,7 @@ function UserSettingsView() {
       body: JSON.stringify({ sharedDeepSeekEnabled: enabled }),
     }).then((response) => {
       setPreference(response.sharedDeepSeek)
-      setNotice(enabled ? '已启用统一 DeepSeek-V4-Flash。' : '已改回 Harness 原有模型凭据。')
+      setNotice(enabled ? t('preferences.enabledNotice') : t('preferences.disabledNotice'))
     }).catch((reason: unknown) => {
       setError(reason instanceof Error ? reason.message : String(reason))
     }).finally(() => { setSaving(false) })
@@ -381,31 +404,31 @@ function UserSettingsView() {
   return (
     <main className={css.main}>
       <header className={css.pageHeader}>
-        <div><h1>设置</h1><p>选择是否使用管理员提供的统一模型凭据。</p></div>
+        <div><h1>{t('preferences.title')}</h1><p>{t('preferences.lead')}</p></div>
         <button className={css.secondaryButton} type="button" disabled={loading || saving} onClick={() => { void refresh() }}>
-          {loading ? '正在刷新…' : '刷新状态'}
+          {loading ? t('action.refreshing') : t('action.refresh')}
         </button>
       </header>
-      <div className={css.infoStrip}>统一 API Key 只在服务端使用，浏览器和个人目录都不会收到密钥内容。</div>
+      <div className={css.infoStrip}>{t('preferences.secretNotice')}</div>
       {error !== undefined && <div className={css.pageError} role="alert">{error}</div>}
       {notice !== undefined && <div className={css.pageNotice} role="status">{notice}</div>}
-      {preference === undefined && loading && <div className={css.settingsLoading}>正在读取个人设置…</div>}
+      {preference === undefined && loading && <div className={css.settingsLoading}>{t('preferences.loading')}</div>}
       {preference !== undefined && (
         <section className={css.preferenceCard} aria-labelledby="shared-deepseek-user-title">
           <div className={css.preferenceHeader}>
             <div>
-              <span className={css.eyebrow}>统一模型</span>
+              <span className={css.eyebrow}>{t('preferences.modelTitle')}</span>
               <h2 id="shared-deepseek-user-title">{preference.name}</h2>
-              <p>仅 DeepSeek‑V4‑Flash 会使用管理员配置的统一 Key；其他模型继续使用 Harness 原有配置。</p>
+              <p>{t('preferences.modelDescription')}</p>
             </div>
             <span className={preference.configured ? css.stateReady : css.statePending}>
-              {preference.configured ? '管理员已配置' : '管理员尚未配置'}
+              {preference.configured ? t('preferences.adminConfigured') : t('preferences.adminNotConfigured')}
             </span>
           </div>
           <div className={css.preferenceRow}>
             <div>
-              <strong>使用统一 API Key</strong>
-              <span>{preference.enabled ? '当前已启用，可直接使用统一模型。' : '当前未启用，不会使用统一密钥。'}</span>
+              <strong>{t('preferences.useShared')}</strong>
+              <span>{preference.enabled ? t('preferences.enabledHelp') : t('preferences.disabledHelp')}</span>
             </div>
             <label className={css.toggleLabel}>
               <input
@@ -414,7 +437,7 @@ function UserSettingsView() {
                 disabled={(!preference.configured && !preference.enabled) || saving}
                 onChange={(event) => { setEnabled(event.target.checked) }}
               />
-              <span>{saving ? '正在保存…' : preference.enabled ? '已启用' : '未启用'}</span>
+              <span>{saving ? t('action.saving') : preference.enabled ? t('state.enabled') : t('state.disabled')}</span>
             </label>
           </div>
         </section>
@@ -423,12 +446,12 @@ function UserSettingsView() {
   )
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${String(bytes)} B`
-  return `${String(Math.round(bytes / 1024))} KiB`
+function formatBytes(bytes: number, t: WebTranslate): string {
+  if (bytes < 1024) return `${String(bytes)} ${t('units.bytes')}`
+  return `${String(Math.round(bytes / 1024))} ${t('units.kibibytes')}`
 }
 
-function SystemSettingsView() {
+function SystemSettingsView({ t }: { t: WebTranslate }) {
   const [settings, setSettings] = useState<SystemSettingsResponse>()
   const [apiKey, setApiKey] = useState('')
   const [oidcDraft, setOidcDraft] = useState<OidcDraft>(defaultOidcDraft)
@@ -475,7 +498,7 @@ function SystemSettingsView() {
     }).then(({ sharedDeepSeek }) => {
       updateSharedStatus(sharedDeepSeek)
       setApiKey('')
-      setNotice('统一 DeepSeek API Key 已保存。用户需要在“设置”中主动启用，才会在 DeepSeek-V4-Flash 请求中使用。')
+      setNotice(t('shared.savedNotice'))
     }).catch((reason: unknown) => {
       setError(reason instanceof Error ? reason.message : String(reason))
     }).finally(() => { setSaving(false) })
@@ -490,7 +513,7 @@ function SystemSettingsView() {
     }).then(({ sharedDeepSeek }) => {
       updateSharedStatus(sharedDeepSeek)
       setApiKey('')
-      setNotice('统一 DeepSeek API Key 已移除。已启用用户在重新配置前不会再使用统一密钥。')
+      setNotice(t('shared.removedNotice'))
     }).catch((reason: unknown) => {
       setError(reason instanceof Error ? reason.message : String(reason))
     }).finally(() => { setSaving(false) })
@@ -518,8 +541,8 @@ function SystemSettingsView() {
       setOidcDraft(oidcDraftFrom(status))
       setOidcSecret('')
       setNotice(status.configured
-        ? 'OIDC 配置已保存并启用，登录页现在可使用企业 SSO。'
-        : 'OIDC 配置已保存，但当前尚未启用或缺少客户端密钥。')
+        ? t('oidc.savedEnabledNotice')
+        : t('oidc.savedInactiveNotice'))
     }).catch((reason: unknown) => {
       setError(reason instanceof Error ? reason.message : String(reason))
     }).finally(() => { setOidcSaving(false) })
@@ -536,8 +559,8 @@ function SystemSettingsView() {
     }).then(({ oidc: result }) => {
       setOidcTest(result)
       setNotice(result.supportsPkceS256
-        ? 'OIDC 发现文档连接成功，并声明支持 PKCE S256。'
-        : 'OIDC 发现文档连接成功，但未声明支持 PKCE S256。')
+        ? t('oidc.testPkceNotice')
+        : t('oidc.testNoPkceNotice'))
     }).catch((reason: unknown) => {
       setError(reason instanceof Error ? reason.message : String(reason))
     }).finally(() => { setOidcTesting(false) })
@@ -546,32 +569,32 @@ function SystemSettingsView() {
   return (
     <main className={css.main}>
       <header className={css.pageHeader}>
-        <div><h1>系统设置</h1><p>管理统一模型凭据、企业登录与服务运行状态。</p></div>
+        <div><h1>{t('system.title')}</h1><p>{t('system.lead')}</p></div>
         <button className={css.secondaryButton} type="button" disabled={loading || saving || oidcSaving || oidcTesting} onClick={() => { void refresh() }}>
-          {loading ? '正在刷新…' : '刷新状态'}
+          {loading ? t('action.refreshing') : t('action.refresh')}
         </button>
       </header>
-      <div className={css.infoStrip}>API Key 仅写入服务器的凭据文件，接口只返回“是否已配置”，不会返回密钥内容。</div>
+      <div className={css.infoStrip}>{t('system.secretNotice')}</div>
       {error !== undefined && <div className={css.pageError} role="alert">{error}</div>}
       {notice !== undefined && <div className={css.pageNotice} role="status">{notice}</div>}
-      {settings === undefined && loading && <div className={css.settingsLoading}>正在读取系统状态…</div>}
+      {settings === undefined && loading && <div className={css.settingsLoading}>{t('system.loading')}</div>}
       {settings !== undefined && (
         <>
           <section className={css.settingsSection} aria-labelledby="shared-deepseek-admin-title">
             <div className={css.sectionHeading}>
-              <div><h2 id="shared-deepseek-admin-title">统一模型 API</h2><p>为所有用户提供可选的 DeepSeek‑V4‑Flash 访问凭据。</p></div>
+              <div><h2 id="shared-deepseek-admin-title">{t('shared.title')}</h2><p>{t('shared.description')}</p></div>
               <span className={settings.sharedDeepSeek.configured ? css.stateReady : css.statePending}>
-                {settings.sharedDeepSeek.configured ? '已配置' : '未配置'}
+                {settings.sharedDeepSeek.configured ? t('state.configured') : t('state.notConfigured')}
               </span>
             </div>
             <div className={css.credentialPanel}>
               <div className={css.credentialSummary}>
-                <div><span>固定模型</span><strong>{settings.sharedDeepSeek.name}</strong></div>
-                <div><span>已启用用户</span><strong>{settings.sharedDeepSeek.enabledUsers}</strong></div>
-                <div><span>密钥可修改</span><strong>{settings.sharedDeepSeek.writable ? '是' : '否'}</strong></div>
+                <div><span>{t('shared.fixedModel')}</span><strong>{settings.sharedDeepSeek.name}</strong></div>
+                <div><span>{t('shared.enabledUsers')}</span><strong>{settings.sharedDeepSeek.enabledUsers}</strong></div>
+                <div><span>{t('shared.writable')}</span><strong>{settings.sharedDeepSeek.writable ? t('action.yes') : t('action.no')}</strong></div>
               </div>
               <form className={css.credentialForm} onSubmit={saveSharedCredential}>
-                <label htmlFor="shared-deepseek-api-key">{settings.sharedDeepSeek.configured ? '替换 API Key' : '设置 API Key'}</label>
+                <label htmlFor="shared-deepseek-api-key">{settings.sharedDeepSeek.configured ? t('shared.replaceApiKey') : t('shared.setApiKey')}</label>
                 <div>
                   <input
                     id="shared-deepseek-api-key"
@@ -579,15 +602,15 @@ function SystemSettingsView() {
                     autoComplete="off"
                     value={apiKey}
                     disabled={!settings.sharedDeepSeek.writable || saving}
-                    placeholder={settings.sharedDeepSeek.configured ? '输入新 Key，原 Key 不会显示' : '输入 DeepSeek API Key'}
+                    placeholder={settings.sharedDeepSeek.configured ? t('shared.replacePlaceholder') : t('shared.setPlaceholder')}
                     onChange={(event) => { setApiKey(event.target.value) }}
                   />
                   <button className={css.primaryButton} type="submit" disabled={!settings.sharedDeepSeek.writable || saving || apiKey.trim().length === 0}>
-                    {saving ? '正在保存…' : settings.sharedDeepSeek.configured ? '替换 Key' : '保存 Key'}
+                    {saving ? t('action.saving') : settings.sharedDeepSeek.configured ? t('shared.replaceKey') : t('shared.saveKey')}
                   </button>
                   {settings.sharedDeepSeek.configured && (
                     <button className={css.dangerButton} type="button" disabled={!settings.sharedDeepSeek.writable || saving} onClick={clearSharedCredential}>
-                      移除统一 Key
+                      {t('shared.removeKey')}
                     </button>
                   )}
                 </div>
@@ -597,122 +620,122 @@ function SystemSettingsView() {
 
           <section className={css.settingsSection} aria-labelledby="oidc-settings-title">
             <div className={css.sectionHeading}>
-              <div><h2 id="oidc-settings-title">企业 OIDC 登录</h2><p>接入 Authorization Code + PKCE；客户端密钥只保存在服务器凭据文件中。</p></div>
+              <div><h2 id="oidc-settings-title">{t('oidc.title')}</h2><p>{t('oidc.description')}</p></div>
               <span className={settings.authentication.oidc.configured ? css.stateReady : css.statePending}>
                 {settings.authentication.oidc.configured
-                  ? '已启用'
-                  : settings.authentication.oidc.settings === undefined ? '未配置' : '已保存未启用'}
+                  ? t('state.enabled')
+                  : settings.authentication.oidc.settings === undefined ? t('state.notConfigured') : t('oidc.savedDisabled')}
               </span>
             </div>
             <form className={css.oidcPanel} onSubmit={saveOidc}>
               <div className={css.oidcToggleRow}>
-                <div><strong>允许企业 SSO 登录</strong><span>关闭后保留参数与身份绑定，本地测试登录不受影响。</span></div>
+                <div><strong>{t('oidc.allowSso')}</strong><span>{t('oidc.disabledHelp')}</span></div>
                 <label className={css.toggleLabel}>
                   <input
                     type="checkbox"
-                    aria-label="允许企业 SSO 登录"
+                    aria-label={t('oidc.allowSso')}
                     checked={oidcDraft.enabled}
                     onChange={(event) => { setOidcDraft({ ...oidcDraft, enabled: event.target.checked }) }}
                   />
-                  <span>{oidcDraft.enabled ? '启用' : '停用'}</span>
+                  <span>{oidcDraft.enabled ? t('action.enable') : t('action.disable')}</span>
                 </label>
               </div>
               <div className={css.oidcFormGrid}>
                 <label className={css.oidcWideField}>
-                  <span>Issuer URL</span>
+                  <span>{t('oidc.issuerUrl')}</span>
                   <input
                     required
                     type="url"
-                    aria-label="Issuer URL"
+                    aria-label={t('oidc.issuerUrl')}
                     value={oidcDraft.issuer}
-                    placeholder="https://sso.example.internal/api/oidc"
+                    placeholder={t('oidc.issuerPlaceholder')}
                     onChange={(event) => { setOidcDraft({ ...oidcDraft, issuer: event.target.value }) }}
                   />
-                  <small>填写发现文档中的 issuer；程序会访问 <code>/.well-known/openid-configuration</code>。</small>
+                  <small>{t('oidc.discoveryHelp')} <code>{t('oidc.discoveryPath')}</code>。</small>
                 </label>
                 <label>
-                  <span>Client ID</span>
+                  <span>{t('oidc.clientId')}</span>
                   <input
                     required
-                    aria-label="Client ID"
+                    aria-label={t('oidc.clientId')}
                     value={oidcDraft.clientId}
                     autoComplete="off"
                     onChange={(event) => { setOidcDraft({ ...oidcDraft, clientId: event.target.value }) }}
                   />
                 </label>
                 <label>
-                  <span>Token 端点鉴权</span>
+                  <span>{t('oidc.tokenAuth')}</span>
                   <select
-                    aria-label="Token 端点鉴权"
+                    aria-label={t('oidc.tokenAuth')}
                     value={oidcDraft.clientAuthMethod}
                     onChange={(event) => { setOidcDraft({ ...oidcDraft, clientAuthMethod: event.target.value as OidcClientAuthMethod }) }}
                   >
                     <option value="client_secret_basic">client_secret_basic</option>
                     <option value="client_secret_post">client_secret_post</option>
-                    <option value="none">none（公共客户端）</option>
+                    <option value="none">{t('oidc.publicClient')}</option>
                   </select>
                 </label>
                 <label className={css.oidcWideField}>
-                  <span>{settings.authentication.oidc.clientSecretConfigured ? '替换 Client Secret' : 'Client Secret'}</span>
+                  <span>{settings.authentication.oidc.clientSecretConfigured ? t('oidc.replaceSecret') : t('oidc.clientSecret')}</span>
                   <input
                     type="password"
-                    aria-label={settings.authentication.oidc.clientSecretConfigured ? '替换 Client Secret' : 'Client Secret'}
+                    aria-label={settings.authentication.oidc.clientSecretConfigured ? t('oidc.replaceSecret') : t('oidc.clientSecret')}
                     autoComplete="new-password"
                     value={oidcSecret}
                     disabled={oidcDraft.clientAuthMethod === 'none' || !settings.authentication.oidc.clientSecretWritable}
                     placeholder={oidcDraft.clientAuthMethod === 'none'
-                      ? '公共客户端不使用密钥'
-                      : settings.authentication.oidc.clientSecretConfigured ? '留空则保留现有密钥' : '输入 OIDC 客户端密钥'}
+                      ? t('oidc.noSecretPlaceholder')
+                      : settings.authentication.oidc.clientSecretConfigured ? t('oidc.keepSecretPlaceholder') : t('oidc.secretPlaceholder')}
                     onChange={(event) => { setOidcSecret(event.target.value) }}
                   />
-                  <small>保存后不会回显。当前状态：{settings.authentication.oidc.clientSecretConfigured ? '已配置' : '未配置'}。</small>
+                  <small>{t('oidc.secretStatus')}{settings.authentication.oidc.clientSecretConfigured ? t('state.configured') : t('state.notConfigured')}。</small>
                 </label>
                 <label className={css.oidcWideField}>
-                  <span>Redirect URI</span>
+                  <span>{t('oidc.redirectUri')}</span>
                   <input
                     required
                     type="url"
-                    aria-label="Redirect URI"
+                    aria-label={t('oidc.redirectUri')}
                     value={oidcDraft.redirectUri}
                     onChange={(event) => { setOidcDraft({ ...oidcDraft, redirectUri: event.target.value }) }}
                   />
-                  <small>请把这个完整地址登记到 OIDC 服务端；路径必须为 <code>/auth/oidc/callback</code>。</small>
+                  <small>{t('oidc.redirectHelp')} <code>{t('oidc.callbackPath')}</code>。</small>
                 </label>
                 <label>
-                  <span>Scopes</span>
+                  <span>{t('oidc.scopes')}</span>
                   <input
                     required
-                    aria-label="Scopes"
+                    aria-label={t('oidc.scopes')}
                     value={oidcDraft.scopes}
                     onChange={(event) => { setOidcDraft({ ...oidcDraft, scopes: event.target.value }) }}
                   />
-                  <small>至少包含 <code>openid</code>；当前文档推荐 profile、email、groups。</small>
+                  <small>{t('oidc.scopesMinimum')} <code>{t('oidc.openid')}</code>{t('oidc.scopesRecommendation')}</small>
                 </label>
                 <label>
-                  <span>新用户管理员组</span>
+                  <span>{t('oidc.adminGroup')}</span>
                   <input
-                    aria-label="新用户管理员组"
+                    aria-label={t('oidc.adminGroup')}
                     value={oidcDraft.administratorGroup}
                     placeholder="super_admin"
                     onChange={(event) => { setOidcDraft({ ...oidcDraft, administratorGroup: event.target.value }) }}
                   />
-                  <small>首次登录时命中该 groups 值则创建为管理员；留空则全部创建为普通用户。</small>
+                  <small>{t('oidc.adminGroupHelp')}</small>
                 </label>
               </div>
               <label className={css.oidcCheckRow}>
                 <input
                   type="checkbox"
-                  aria-label="允许内网 HTTP"
+                  aria-label={t('oidc.allowHttp')}
                   checked={oidcDraft.allowInsecureIssuer}
                   onChange={(event) => { setOidcDraft({ ...oidcDraft, allowInsecureIssuer: event.target.checked }) }}
                 />
-                <span><strong>允许内网 HTTP</strong>仅用于受控纯内网部署；生产环境应使用 HTTPS。</span>
+                <span><strong>{t('oidc.allowHttp')}</strong>{t('oidc.allowHttpHelp')}</span>
               </label>
               {oidcTest !== undefined && (
                 <dl className={css.oidcTestResult}>
-                  <div><dt>发现结果</dt><dd>{oidcTest.ok ? '连接成功' : '失败'}</dd></div>
-                  <div><dt>Issuer</dt><dd><code>{oidcTest.issuer}</code></dd></div>
-                  <div><dt>PKCE S256</dt><dd>{oidcTest.supportsPkceS256 ? '支持' : '未声明'}</dd></div>
+                  <div><dt>{t('oidc.discoveryResult')}</dt><dd>{oidcTest.ok ? t('oidc.connectionSuccess') : t('oidc.connectionFailure')}</dd></div>
+                  <div><dt>{t('oidc.issuer')}</dt><dd><code>{oidcTest.issuer}</code></dd></div>
+                  <div><dt>{t('oidc.pkce')}</dt><dd>{oidcTest.supportsPkceS256 ? t('oidc.supported') : t('oidc.notDeclared')}</dd></div>
                 </dl>
               )}
               <div className={css.oidcActions}>
@@ -722,10 +745,10 @@ function SystemSettingsView() {
                   disabled={oidcSaving || oidcTesting || settings.authentication.oidc.settings === undefined}
                   onClick={testOidc}
                 >
-                  {oidcTesting ? '正在连接…' : '测试已保存配置'}
+                  {oidcTesting ? t('oidc.testing') : t('oidc.testSaved')}
                 </button>
                 <button className={css.primaryButton} type="submit" disabled={oidcSaving || oidcTesting}>
-                  {oidcSaving ? '正在保存…' : '保存 OIDC 配置'}
+                  {oidcSaving ? t('action.saving') : t('oidc.save')}
                 </button>
               </div>
             </form>
@@ -733,39 +756,39 @@ function SystemSettingsView() {
 
           <section className={css.settingsSection} aria-labelledby="runtime-settings-title">
             <div className={css.sectionHeading}>
-              <div><h2 id="runtime-settings-title">运行概览</h2><p>当前 Host 进程与持久化方式。</p></div>
-              <span className={css.readonlyBadge}>只读</span>
+              <div><h2 id="runtime-settings-title">{t('runtime.title')}</h2><p>{t('runtime.description')}</p></div>
+              <span className={css.readonlyBadge}>{t('state.readOnly')}</span>
             </div>
             <div className={css.metricGrid}>
-              <article><span>运行模式</span><strong>单进程</strong></article>
-              <article><span>持久化</span><strong>文件存储</strong></article>
-              <article><span>启用用户</span><strong>{settings.users.active} / {settings.users.total}</strong></article>
-              <article><span>管理员</span><strong>{settings.users.administrators}</strong></article>
+              <article><span>{t('runtime.mode')}</span><strong>{t('runtime.singleProcess')}</strong></article>
+              <article><span>{t('runtime.persistence')}</span><strong>{t('runtime.fileStorage')}</strong></article>
+              <article><span>{t('runtime.activeUsers')}</span><strong>{settings.users.active} / {settings.users.total}</strong></article>
+              <article><span>{t('role.admin')}</span><strong>{settings.users.administrators}</strong></article>
             </div>
           </section>
 
           <section className={css.settingsSection} aria-labelledby="authentication-settings-title">
-            <div className={css.sectionHeading}><div><h2 id="authentication-settings-title">登录与会话</h2><p>认证入口和浏览器会话安全属性。</p></div></div>
+            <div className={css.sectionHeading}><div><h2 id="authentication-settings-title">{t('auth.title')}</h2><p>{t('auth.description')}</p></div></div>
             <dl className={css.settingsList}>
-              <div><dt>企业 OIDC</dt><dd><span className={settings.authentication.oidcConfigured ? css.stateReady : css.statePending}>{settings.authentication.oidcConfigured ? '已启用' : '未启用'}</span></dd></div>
-              <div><dt>本地账号登录</dt><dd>{settings.authentication.localLoginEnabled ? '已启用' : '已停用'}</dd></div>
-              <div><dt>会话 Cookie</dt><dd><code>{settings.authentication.cookie.name}</code></dd></div>
-              <div><dt>Cookie 安全属性</dt><dd>{[
+              <div><dt>{t('auth.enterpriseOidc')}</dt><dd><span className={settings.authentication.oidcConfigured ? css.stateReady : css.statePending}>{settings.authentication.oidcConfigured ? t('state.enabled') : t('state.disabled')}</span></dd></div>
+              <div><dt>{t('auth.localLogin')}</dt><dd>{settings.authentication.localLoginEnabled ? t('state.enabled') : t('state.disabled')}</dd></div>
+              <div><dt>{t('auth.cookie')}</dt><dd><code>{settings.authentication.cookie.name}</code></dd></div>
+              <div><dt>{t('auth.cookieSecurity')}</dt><dd>{[
                 settings.authentication.cookie.httpOnly ? 'HttpOnly' : undefined,
                 `SameSite=${settings.authentication.cookie.sameSite}`,
-                settings.authentication.cookie.secure ? 'Secure' : '未启用 Secure（仅适用于当前 HTTP 部署）',
+                settings.authentication.cookie.secure ? 'Secure' : t('auth.secureDisabled'),
               ].filter(value => value !== undefined).join(' · ')}</dd></div>
             </dl>
           </section>
 
           <section className={css.settingsSection} aria-labelledby="storage-settings-title">
-            <div className={css.sectionHeading}><div><h2 id="storage-settings-title">数据与隔离</h2><p>用户目录和项目内容的服务端管理策略。</p></div></div>
+            <div className={css.sectionHeading}><div><h2 id="storage-settings-title">{t('isolation.title')}</h2><p>{t('isolation.description')}</p></div></div>
             <dl className={css.settingsList}>
-              <div><dt>服务数据目录</dt><dd><code className={css.pathValue}>{settings.runtime.dataRoot}</code></dd></div>
-              <div><dt>用户目录标识</dt><dd>稳定用户 ID（不使用用户名）</dd></div>
-              <div><dt>项目目录</dt><dd>{settings.isolation.projectsManaged ? '由 Harness 自动创建与管理' : '允许用户选择服务器目录'}</dd></div>
-              <div><dt>管理员内容权限</dt><dd>{settings.isolation.administratorContentAccess ? '可查看用户项目内容' : '仅管理账号元数据，不可查看用户项目内容'}</dd></div>
-              <div><dt>认证请求上限</dt><dd>{formatBytes(settings.limits.maxBodyBytes)}</dd></div>
+              <div><dt>{t('isolation.dataRoot')}</dt><dd><code className={css.pathValue}>{settings.runtime.dataRoot}</code></dd></div>
+              <div><dt>{t('isolation.userDirectoryKey')}</dt><dd>{t('isolation.stableUserId')}</dd></div>
+              <div><dt>{t('isolation.projectDirectory')}</dt><dd>{settings.isolation.projectsManaged ? t('isolation.managed') : t('isolation.userSelected')}</dd></div>
+              <div><dt>{t('isolation.adminAccess')}</dt><dd>{settings.isolation.administratorContentAccess ? t('isolation.canView') : t('isolation.metadataOnly')}</dd></div>
+              <div><dt>{t('isolation.requestLimit')}</dt><dd>{formatBytes(settings.limits.maxBodyBytes, t)}</dd></div>
             </dl>
           </section>
         </>
@@ -774,7 +797,7 @@ function SystemSettingsView() {
   )
 }
 
-function AdminView({ currentUser }: { currentUser: ClientAuthUser }) {
+function AdminView({ currentUser, t }: { currentUser: ClientAuthUser; t: WebTranslate }) {
   const [users, setUsers] = useState<ClientAuthUser[]>([])
   const [query, setQuery] = useState('')
   const [role, setRole] = useState<'all' | 'admin' | 'user'>('all')
@@ -835,7 +858,7 @@ function AdminView({ currentUser }: { currentUser: ClientAuthUser }) {
     void jsonRequest<Record<string, never>>(`/auth/users/${encodeURIComponent(resetting.id)}/reset-password`, {
       method: 'POST', body: JSON.stringify({ password: resetPassword }),
     }).then(() => {
-      setNotice(`已重置 ${resetting.displayName} 的本地密码，并撤销该用户的现有登录会话。`)
+      setNotice(t('users.resetNotice', { displayName: resetting.displayName }))
       setResetting(undefined)
       setResetPassword('')
       setError(undefined)
@@ -845,49 +868,49 @@ function AdminView({ currentUser }: { currentUser: ClientAuthUser }) {
   return (
     <main className={css.main}>
       <header className={css.pageHeader}>
-        <div><h1>用户管理</h1><p>管理访问 Harness 的账号与角色，不显示任何用户项目内容。</p></div>
-        <button className={css.primaryButton} type="button" onClick={() => { setCreating(true) }}>新建本地用户</button>
+        <div><h1>{t('users.title')}</h1><p>{t('users.description')}</p></div>
+        <button className={css.primaryButton} type="button" onClick={() => { setCreating(true) }}>{t('users.newLocal')}</button>
       </header>
-      <div className={css.infoStrip}>OIDC 用户首次登录时按 issuer 与 sub 自动绑定；显示名称和用户名不会覆盖现有本地账号。</div>
+      <div className={css.infoStrip}>{t('users.oidcNotice')}</div>
       {error !== undefined && <div className={css.pageError} role="alert">{error}</div>}
       {notice !== undefined && <div className={css.pageNotice} role="status">{notice}</div>}
       <div className={css.filters}>
-        <input placeholder="搜索用户名或显示名称" value={query} onChange={(event) => { setQuery(event.target.value) }} />
+        <input placeholder={t('users.search')} value={query} onChange={(event) => { setQuery(event.target.value) }} />
         <select value={role} onChange={(event) => { setRole(event.target.value as typeof role) }}>
-          <option value="all">全部角色</option>
-          <option value="admin">管理员</option>
-          <option value="user">普通用户</option>
+          <option value="all">{t('users.allRoles')}</option>
+          <option value="admin">{t('role.admin')}</option>
+          <option value="user">{t('role.user')}</option>
         </select>
       </div>
       <div className={css.tableWrap}>
         <table>
-          <thead><tr><th>用户</th><th>登录方式</th><th>角色</th><th>状态</th><th>最近登录</th><th>操作</th></tr></thead>
+          <thead><tr><th>{t('users.user')}</th><th>{t('users.authMethod')}</th><th>{t('users.role')}</th><th>{t('users.status')}</th><th>{t('users.lastLogin')}</th><th>{t('users.actions')}</th></tr></thead>
           <tbody>
             {filtered.map(user => (
               <tr key={user.id}>
                 <td><strong>{user.displayName}</strong><span>@{user.username}</span></td>
-                <td>{user.authMethods.map(method => method === 'local' ? '本地' : 'OIDC').join(' / ')}</td>
+                <td>{user.authMethods.map(method => method === 'local' ? t('auth.local') : 'OIDC').join(' / ')}</td>
                 <td>
                   <select
                     value={user.role}
                     disabled={user.id === currentUser.id}
                     onChange={(event) => { update(user, { role: event.target.value }) }}
                   >
-                    <option value="admin">管理员</option>
-                    <option value="user">普通用户</option>
+                    <option value="admin">{t('role.admin')}</option>
+                    <option value="user">{t('role.user')}</option>
                   </select>
                 </td>
-                <td><span className={user.status === 'active' ? css.statusActive : css.statusDisabled}>{user.status === 'active' ? '启用' : '停用'}</span></td>
-                <td>{relativeTime(user.lastLoginAt)}</td>
+                <td><span className={user.status === 'active' ? css.statusActive : css.statusDisabled}>{user.status === 'active' ? t('action.enable') : t('action.disable')}</span></td>
+                <td>{relativeTime(user.lastLoginAt, t)}</td>
                 <td>
                   <div className={css.tableActions}>
                     {user.authMethods.includes('local') && (
                       <button type="button" disabled={user.id === currentUser.id} onClick={() => { setResetting(user); setResetPassword('') }}>
-                        重置密码
+                        {t('users.resetPassword')}
                       </button>
                     )}
                     <button type="button" disabled={user.id === currentUser.id} onClick={() => { update(user, { status: user.status === 'active' ? 'disabled' : 'active' }) }}>
-                      {user.status === 'active' ? '停用' : '启用'}
+                      {user.status === 'active' ? t('action.disable') : t('action.enable')}
                     </button>
                   </div>
                 </td>
@@ -901,10 +924,10 @@ function AdminView({ currentUser }: { currentUser: ClientAuthUser }) {
           if (event.currentTarget === event.target) setCreating(false)
         }}>
           <form className={css.modal} onSubmit={create}>
-            <h2>新建本地用户</h2>
-            <p>用户首次登录后会自动获得独立数据目录。</p>
+            <h2>{t('users.newLocal')}</h2>
+            <p>{t('users.newDescription')}</p>
             <label>
-              <span>用户名</span>
+              <span>{t('users.username')}</span>
               <input
                 required
                 minLength={3}
@@ -914,14 +937,14 @@ function AdminView({ currentUser }: { currentUser: ClientAuthUser }) {
               />
             </label>
             <label>
-              <span>显示名称</span>
+              <span>{t('users.displayName')}</span>
               <input
                 value={draft.displayName}
                 onChange={(event) => { setDraft({ ...draft, displayName: event.target.value }) }}
               />
             </label>
             <label>
-              <span>初始密码</span>
+              <span>{t('users.initialPassword')}</span>
               <input
                 required
                 type="password"
@@ -931,18 +954,18 @@ function AdminView({ currentUser }: { currentUser: ClientAuthUser }) {
               />
             </label>
             <label>
-              <span>角色</span>
+              <span>{t('users.role')}</span>
               <select
                 value={draft.role}
                 onChange={(event) => { setDraft({ ...draft, role: event.target.value as 'admin' | 'user' }) }}
               >
-                <option value="user">普通用户</option>
-                <option value="admin">管理员</option>
+                <option value="user">{t('role.user')}</option>
+                <option value="admin">{t('role.admin')}</option>
               </select>
             </label>
             <div className={css.modalActions}>
-              <button type="button" onClick={() => { setCreating(false) }}>取消</button>
-              <button className={css.primaryButton} type="submit">创建用户</button>
+              <button type="button" onClick={() => { setCreating(false) }}>{t('action.cancel')}</button>
+              <button className={css.primaryButton} type="submit">{t('users.create')}</button>
             </div>
           </form>
         </div>
@@ -952,10 +975,10 @@ function AdminView({ currentUser }: { currentUser: ClientAuthUser }) {
           if (event.currentTarget === event.target) setResetting(undefined)
         }}>
           <form className={css.modal} onSubmit={reset}>
-            <h2>重置本地密码</h2>
-            <p>为 {resetting.displayName} 设置新密码。保存后会撤销该用户的全部现有登录会话。</p>
+            <h2>{t('users.resetTitle')}</h2>
+            <p>{t('users.forPrefix')} {resetting.displayName} {t('users.resetDescription')}</p>
             <label>
-              <span>新密码</span>
+              <span>{t('users.newPassword')}</span>
               <input
                 required
                 type="password"
@@ -966,8 +989,8 @@ function AdminView({ currentUser }: { currentUser: ClientAuthUser }) {
               />
             </label>
             <div className={css.modalActions}>
-              <button type="button" onClick={() => { setResetting(undefined) }}>取消</button>
-              <button className={css.primaryButton} type="submit">确认重置</button>
+              <button type="button" onClick={() => { setResetting(undefined) }}>{t('action.cancel')}</button>
+              <button className={css.primaryButton} type="submit">{t('users.confirmReset')}</button>
             </div>
           </form>
         </div>

@@ -1,0 +1,19 @@
+- main:
+  - text: Harness
+  - region "登录你的工作空间":
+    - heading "登录你的工作空间" [level=1]
+    - paragraph: 进入你的个人项目、会话和设置。
+    - button "使用企业 SSO 登录 尚未配置" [disabled]:
+      - img
+      - text: 使用企业 SSO 登录 尚未配置
+    - text: 或使用本地账号 用户名
+    - textbox "用户名":
+      - /placeholder: 请输入用户名
+    - text: 密码
+    - textbox "密码":
+      - /placeholder: 请输入密码
+    - button "登录"
+    - img
+    - text: 仅限授权的内部用户
+    - img
+    - text: 本地账号仅用于测试与应急

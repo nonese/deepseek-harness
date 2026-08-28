@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-host-auth-web",
   "description": "Same-origin browser login, session, user administration, and managed-project routes for Harness",
-  "version": "0.1.0-rc.5",
+  "version": "0.1.2-alpha.1",
   "publishConfig": {
     "access": "public"
   },
@@ -38,6 +38,10 @@
   "peerDependencies": {
     "@deepseek-ai/cordis": "workspace:^",
     "@deepseek-ai/dsh-auth": "workspace:^",
+    "@deepseek-ai/dsh-api-gateway": "workspace:^",
+    "@deepseek-ai/dsh-api-session-controller": "workspace:^",
+    "@deepseek-ai/dsh-api-workspace-controller": "workspace:^",
+    "@deepseek-ai/dsh-client-connection": "workspace:^",
     "@deepseek-ai/dsh-credentials": "workspace:^",
     "@deepseek-ai/dsh-host-webserver": "workspace:^",
     "@deepseek-ai/dsh-invariants": "workspace:^",
@@ -53,6 +57,10 @@
     "@deepseek-ai/cordis-plugin-loader": "workspace:^",
     "@deepseek-ai/dsh-auth": "workspace:^",
     "@deepseek-ai/dsh-auth-file": "workspace:^",
+    "@deepseek-ai/dsh-api-gateway": "workspace:^",
+    "@deepseek-ai/dsh-api-session-controller": "workspace:^",
+    "@deepseek-ai/dsh-api-workspace-controller": "workspace:^",
+    "@deepseek-ai/dsh-client-connection": "workspace:^",
     "@deepseek-ai/dsh-credentials": "workspace:^",
     "@deepseek-ai/dsh-credentials-local": "workspace:^",
     "@deepseek-ai/dsh-host-webserver": "workspace:^",

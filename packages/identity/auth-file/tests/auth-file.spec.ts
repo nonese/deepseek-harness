@@ -30,6 +30,15 @@ async function boot(): Promise<Context> {
 }
 
 describe('file authentication provider', () => {
+  it('can provide an empty service for a closed runtime that supplies no login surface', async () => {
+    root = await mkdtemp(join(tmpdir(), 'harness-auth-file-empty-'))
+    ctx = new Context()
+    await ctx.plugin(FileAuthService, { root, bootstrapAdministrator: false })
+    expect(ctx.auth.listUsers()).toEqual([])
+    await expect(readFile(join(root, 'system', 'auth', 'users.json'), 'utf8'))
+      .rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it('bootstraps one administrator, stores owner-only files, and authenticates opaque sessions', async () => {
     const loaded = await boot()
     expect(loaded.auth.listUsers()).toMatchObject([{ username: 'admin', role: 'admin', status: 'active' }])

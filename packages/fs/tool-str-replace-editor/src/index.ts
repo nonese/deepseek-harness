@@ -22,6 +22,7 @@ Custom editing tool for viewing, creating and editing files
 * If \`path\` is a file, \`view\` displays the result of applying \`cat -n\`. If \`path\` is a directory, \`view\` lists non-hidden files and directories up to 2 levels deep
 * The \`create\` command cannot be used if the specified \`path\` already exists as a file
 * If a \`command\` generates a long output, it will be truncated and marked with \`<response clipped>\`
+* A null placeholder for a parameter unused by the selected command is treated as omitted. Required parameters still need values; omit \`str_replace.new_str\` rather than setting it to null when deleting a match
 
 Notes for using the \`str_replace\` command:
 * The \`old_str\` parameter should match EXACTLY one or more consecutive lines from the original file. Be mindful of whitespaces!
@@ -88,21 +89,13 @@ class MutationPolicy {
 async function resolveTarget(
   ctx: Context,
   path: string,
-  exec: ToolRunContext,
-  sandboxPolicy: SandboxExecutionPolicy | undefined,
+  signal: AbortSignal,
 ): Promise<FsTarget> {
   if (path.trim().length === 0) throw new Error('path must be a non-empty string')
   if (!isAbsolute(path)) {
     throw new Error(`The path ${path} is not an absolute path, it should start with \`/\`. Maybe you meant /${path}?`)
   }
-  const target = await ctx.fs.resolve(path, { signal: exec.signal })
-  if (sandboxPolicy?.readableRoot !== undefined) {
-    const root = await ctx.fs.resolve(sandboxPolicy.readableRoot, { signal: exec.signal })
-    if (!ctx.fs.contains(root, target)) {
-      throw new FsError('file access is outside the authenticated user root', 'FS_SANDBOX_DENIED')
-    }
-  }
-  return target
+  return ctx.fs.resolve(path, { signal })
 }
 
 async function statExisting(
@@ -223,14 +216,12 @@ async function listDirectory(
 
 async function viewPath(
   ctx: Context,
-  policy: MutationPolicy,
   path: string,
   viewRange: number[] | undefined,
   maxOutputChars: number,
   exec: ToolRunContext,
 ): Promise<string> {
-  const sandboxPolicy = policy.resolve(exec)
-  const target = await resolveTarget(ctx, path, exec, sandboxPolicy)
+  const target = await resolveTarget(ctx, path, exec.signal)
   const info = await statExisting(ctx, target, 'view', exec)
   if (info.type === 'directory') {
     if (viewRange !== undefined) {
@@ -255,7 +246,7 @@ async function createFile(
 ): Promise<string> {
   const content = requiredForCommand(fileText, 'file_text', 'create')
   const sandboxPolicy = policy.resolve(exec)
-  const target = await resolveTarget(ctx, path, exec, sandboxPolicy)
+  const target = await resolveTarget(ctx, path, exec.signal)
   if (await ctx.fs.stat(target, exec.signal) !== undefined) {
     throw new Error(`File already exists at: ${target.displayPath}. Cannot overwrite files using command \`create\`.`)
   }
@@ -286,11 +277,14 @@ async function replaceInFile(
   policy: MutationPolicy,
   path: string,
   oldStr: string | undefined,
-  newStr: string | undefined,
+  newStr: string | null | undefined,
   exec: ToolRunContext,
 ): Promise<string> {
+  if (newStr === null) {
+    throw new Error('Parameter `new_str` must be omitted or contain a string for command: str_replace')
+  }
   const sandboxPolicy = policy.resolve(exec)
-  const target = await resolveTarget(ctx, path, exec, sandboxPolicy)
+  const target = await resolveTarget(ctx, path, exec.signal)
   const intent = await ctx.waterfall('fs/edit-intent', target, exec, () => undefined)
   const oldValue = requiredForCommand(oldStr, 'old_str', 'str_replace', false)
   const newValue = newStr ?? ''
@@ -343,7 +337,7 @@ async function insertInFile(
   if (insertLine === undefined) throw new Error('Parameter `insert_line` is required for command: insert')
   const value = requiredForCommand(newStr, 'new_str', 'insert')
   const sandboxPolicy = policy.resolve(exec)
-  const target = await resolveTarget(ctx, path, exec, sandboxPolicy)
+  const target = await resolveTarget(ctx, path, exec.signal)
   const intent = await ctx.waterfall('fs/edit-intent', target, exec, () => undefined)
   const info = await statExisting(ctx, target, 'insert', exec)
   if (info.type !== 'file') {
@@ -382,10 +376,10 @@ interface ResolvedConfig {
 function presentEditorCall(args: {
   command: 'view' | 'create' | 'str_replace' | 'insert'
   path: string
-  file_text?: string
-  insert_line?: number
-  new_str?: string
-  old_str?: string
+  file_text?: string | null
+  insert_line?: number | null
+  new_str?: string | null
+  old_str?: string | null
 }): ToolCallView {
   switch (args.command) {
     case 'view':
@@ -420,7 +414,9 @@ function presentEditorCall(args: {
         kind: 'edit',
         locations: [{
           path: args.path,
-          ...args.insert_line === undefined ? {} : { line: Math.max(1, args.insert_line + 1) },
+          ...args.insert_line === undefined || args.insert_line === null
+            ? {}
+            : { line: Math.max(1, args.insert_line + 1) },
         }],
       }
   }
@@ -445,25 +441,27 @@ function registerStrReplaceEditor(ctx: Context, config: ResolvedConfig): void {
         description: 'Absolute path to file or directory, e.g. `/repo/file.py` or `/repo`.',
       },
       file_text: {
-        type: 'string',
-        description: 'Required parameter of `create` command, with the content of the file to be created.',
+        oneOf: [{ type: 'string' }, { type: 'null' }],
+        description: 'Required string parameter of `create` command, with the content of the file to be created. A null placeholder is treated as omitted by commands that do not use this parameter.',
       },
       insert_line: {
-        type: 'integer',
-        description: 'Required parameter of `insert` command. The `new_str` will be inserted AFTER the line `insert_line` of `path`.',
+        oneOf: [{ type: 'integer' }, { type: 'null' }],
+        description: 'Required integer parameter of `insert` command. The `new_str` will be inserted AFTER the line `insert_line` of `path`. A null placeholder is treated as omitted by commands that do not use this parameter.',
       },
       new_str: {
-        type: 'string',
-        description: 'Optional parameter of `str_replace` command containing the new string (if not given, no string will be added). Required parameter of `insert` command containing the string to insert.',
+        oneOf: [{ type: 'string' }, { type: 'null' }],
+        description: 'Optional string parameter of `str_replace` command containing the new string (if omitted, no string will be added). Required string parameter of `insert` command containing the string to insert. A null placeholder is accepted only by commands that do not use this parameter.',
       },
       old_str: {
-        type: 'string',
-        description: 'Required parameter of `str_replace` command containing the string in `path` to replace.',
+        oneOf: [{ type: 'string' }, { type: 'null' }],
+        description: 'Required string parameter of `str_replace` command containing the string in `path` to replace. A null placeholder is treated as omitted by commands that do not use this parameter.',
       },
       view_range: {
-        type: 'array',
-        items: { type: 'integer' },
-        description: 'Optional parameter of `view` command when `path` points to a file. If none is given, the full file is shown. If provided, the file will be shown in the indicated line number range, e.g. [11, 12] will show lines 11 and 12. Indexing at 1 to start. Setting `[start_line, -1]` shows all lines from `start_line` to the end of the file.',
+        oneOf: [
+          { type: 'array', items: { type: 'integer' } },
+          { type: 'null' },
+        ],
+        description: 'Optional parameter of `view` command when `path` points to a file. If omitted or null, the full file is shown. If provided, the file will be shown in the indicated line number range, e.g. [11, 12] will show lines 11 and 12. Indexing at 1 to start. Setting `[start_line, -1]` shows all lines from `start_line` to the end of the file.',
       },
     },
     output: {
@@ -473,15 +471,15 @@ function registerStrReplaceEditor(ctx: Context, config: ResolvedConfig): void {
     async execute(args, exec) {
       switch (args.command) {
         case 'view':
-          return viewPath(ctx, policy, args.path, args.view_range, config.maxOutputChars, exec)
+          return viewPath(ctx, args.path, args.view_range ?? undefined, config.maxOutputChars, exec)
         case 'create':
-          return createFile(ctx, policy, args.path, args.file_text, exec)
+          return createFile(ctx, policy, args.path, args.file_text ?? undefined, exec)
         case 'str_replace':
           return replaceInFile(
             ctx,
             policy,
             args.path,
-            args.old_str,
+            args.old_str ?? undefined,
             args.new_str,
             exec,
           )
@@ -490,8 +488,8 @@ function registerStrReplaceEditor(ctx: Context, config: ResolvedConfig): void {
             ctx,
             policy,
             args.path,
-            args.insert_line,
-            args.new_str,
+            args.insert_line ?? undefined,
+            args.new_str ?? undefined,
             exec,
           )
       }

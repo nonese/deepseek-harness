@@ -1,0 +1,37 @@
+- complementary:
+  - text: Harness
+  - button "新建会话":
+    - img
+    - text: 新建会话
+  - navigation "主导航":
+    - button "项目":
+      - img
+      - text: 项目
+    - button "会话":
+      - img
+      - text: 会话
+    - button "设置":
+      - img
+      - text: 设置
+    - text: 管理
+    - button "用户管理":
+      - img
+      - text: 用户管理
+    - button "系统设置":
+      - img
+      - text: 系统设置
+  - text: 管
+  - strong: 管理员
+  - text: 管理员
+  - button "退出"
+- main:
+  - heading "我的项目" [level=1]
+  - paragraph: 打开已有项目或创建新的个人项目。
+  - button "新建项目"
+  - text: 项目将自动保存在你的个人空间中，服务器目录由 Harness 统一管理。
+  - region "最近使用":
+    - heading "最近使用" [level=2]
+    - text: 还没有项目。新建一个项目后即可开始会话。
+  - region "最近会话":
+    - heading "最近会话" [level=2]
+    - text: 暂无会话

@@ -4,14 +4,14 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { realpathSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
-import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
   AuthError,
+  managedPathContains,
   type AuthPrincipal,
   type AuthUser,
   type OidcClientAuthMethod,
@@ -19,6 +19,9 @@ import {
   type UserId,
 } from '@deepseek-ai/dsh-auth'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
+import type {
+  ConnectionTrustRequest,
+} from '@deepseek-ai/dsh-client-connection'
 import { normalizeApiKey } from '@deepseek-ai/dsh-llm'
 import {
   PROVIDER as DEEPSEEK_PROVIDER,
@@ -26,16 +29,27 @@ import {
   SHARED_DEEPSEEK_MODEL,
 } from '@deepseek-ai/dsh-llm-deepseek'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
+import type { IndexInjection } from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-session'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-workspace'
 import * as oidc from 'openid-client'
+import { userScopedRemotePolicy } from './remote-policy.ts'
 
 /** Stable Cordis plugin name. */
 export const name = 'host-auth-web'
 
 /** Required services for authentication and project provisioning. */
-export const inject = ['auth', 'credentials', 'sessions', 'webServer', 'workspaceRegistry']
+export const inject = [
+  'auth',
+  'connection',
+  'credentials',
+  'sessionController',
+  'sessions',
+  'typertGateway',
+  'webServer',
+  'workspaceRegistry',
+]
 
 /** Browser authentication route configuration. */
 export interface Config {
@@ -122,6 +136,25 @@ function cookieValue(req: IncomingMessage, name: string): string | undefined {
     const at = part.indexOf('=')
     if (at === -1) continue
     if (part.slice(0, at).trim() !== name) continue
+    try {
+      return decodeURIComponent(part.slice(at + 1).trim())
+    } catch {
+      return undefined
+    }
+  }
+  return undefined
+}
+
+function requestCookieValue(request: ConnectionTrustRequest, name: string): string | undefined {
+  const headers = request.headers
+  const header = headers instanceof Headers
+    ? headers.get('cookie') ?? undefined
+    : headers.cookie
+  const value = typeof header === 'string' ? header : header?.join(';')
+  if (value === undefined) return undefined
+  for (const part of value.split(';')) {
+    const at = part.indexOf('=')
+    if (at === -1 || part.slice(0, at).trim() !== name) continue
     try {
       return decodeURIComponent(part.slice(at + 1).trim())
     } catch {
@@ -313,6 +346,7 @@ async function discoverOidcClient(ctx: Context, requireEnabled: boolean): Promis
     token_endpoint_auth_method: inputs.settings.clientAuthMethod,
     ...inputs.secret === undefined ? {} : { client_secret: inputs.secret },
   }
+  // oxlint-disable-next-line typescript/no-deprecated -- explicitly enabled only for administrator-approved intranet HTTP issuers
   const allowInsecureRequests = oidc.allowInsecureRequests
   const client = await oidc.discovery(
     new URL(inputs.settings.issuer),
@@ -322,31 +356,6 @@ async function discoverOidcClient(ctx: Context, requireEnabled: boolean): Promis
     inputs.settings.allowInsecureIssuer ? { execute: [allowInsecureRequests] } : undefined,
   )
   return { ...inputs, client }
-}
-
-function canonicalPath(path: string): string {
-  try {
-    return realpathSync.native(path)
-  } catch {
-    // Preserve an existing symlink-sensitive spelling before walking a missing suffix.
-  }
-  let current = resolve(path)
-  const missing: string[] = []
-  while (true) {
-    try {
-      return resolve(realpathSync.native(current), ...missing.reverse())
-    } catch {
-      const parent = dirname(current)
-      if (parent === current) return resolve(path)
-      missing.push(basename(current))
-      current = parent
-    }
-  }
-}
-
-function isWithin(root: string, target: string): boolean {
-  const fromRoot = relative(canonicalPath(root), canonicalPath(target))
-  return fromRoot === '' || (!fromRoot.startsWith('..') && !isAbsolute(fromRoot))
 }
 
 async function principalFor(ctx: Context, req: IncomingMessage, cookieName: string): Promise<AuthPrincipal | undefined> {
@@ -397,14 +406,14 @@ function projectView(ctx: Context, principal: AuthPrincipal) {
   const sessionByWorkspace = new Map<string, { count: number; updatedAt?: number }>()
   for (const session of ctx.sessions.list()) {
     const cwd = session.header.cwd
-    if (cwd === undefined || !isWithin(paths.projects, cwd)) continue
+    if (cwd === undefined || !managedPathContains(paths.projects, cwd)) continue
     const current = sessionByWorkspace.get(cwd) ?? { count: 0 }
     current.count += 1
     current.updatedAt = Math.max(current.updatedAt ?? 0, session.header.createdAt)
     sessionByWorkspace.set(cwd, current)
   }
   return ctx.workspaceRegistry.list()
-    .filter(workspace => isWithin(paths.projects, workspace.path))
+    .filter(workspace => managedPathContains(paths.projects, workspace.path))
     .map(workspace => ({
       id: workspace.id,
       name: workspace.title,
@@ -423,6 +432,23 @@ export function apply(ctx: Context, config: Config = {}): void {
   const secure = config.secureCookie ?? false
   const maxBodyBytes = config.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
   const pendingOidcFlows = new Map<string, PendingOidcFlow>()
+
+  ctx.connection.registerAuthenticator({
+    authenticate: async (request) => {
+      const token = requestCookieValue(request, cookieName)
+      if (token === undefined) return undefined
+      const principal = await ctx.auth.authenticateToken(token)
+      return principal === undefined
+        ? undefined
+        : { run: operation => ctx.auth.withPrincipal(principal, operation) }
+    },
+    authorizeIndex: () => Promise.resolve(true),
+    authenticatedUrl: baseUrl => baseUrl,
+  })
+  ctx.typertGateway.registerMiddleware(userScopedRemotePolicy(ctx))
+  ctx.on('webserver/index-inject', (table: IndexInjection[]) => {
+    table.push({ kind: 'global', name: '__HARNESS_MULTI_USER__', value: true })
+  })
 
   const pruneOidcFlows = (): void => {
     const now = Date.now()

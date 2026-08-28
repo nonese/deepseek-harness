@@ -1,15 +1,16 @@
 /** Published dsh web + pnpm dev:web → browser HMR, with no page reload. */
 
-import { existsSync } from 'node:fs'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { existsSync, globSync, statSync } from 'node:fs'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { chromium } from 'playwright'
 import { expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import type { Fiber } from '@deepseek-ai/cordis'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import type { SubprocessHandle, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
+import { readClientBuildRecord } from '../../../scripts/client-build-environment.ts'
 import { REPO_ROOT } from './support.ts'
 
 function spawnSpec(argv: readonly string[], cwd: string, env?: Record<string, string>): SubprocessSpawnSpec {
@@ -70,14 +71,24 @@ async function stopTree(child: SubprocessHandle): Promise<void> {
 it('hot-reloads a real client-plugin source edit without refreshing the page', async () => {
   const world = await mkdtemp(join(tmpdir(), 'dsh-web-hmr-world-'))
   const sourcePath = join(REPO_ROOT, 'packages/client/ui-conversation/src/client/locales.ts')
-  const bundlePath = join(REPO_ROOT, 'packages/client/ui-conversation/lib/client.js')
   const binPath = join(REPO_ROOT, 'apps/cli/lib/bin.js')
   if (!existsSync(binPath)) throw new Error('HMR browser test needs the built dsh bin; run pnpm run build first')
+  const clientBuildEnvironment = readClientBuildRecord(REPO_ROOT).environment
+  const clientArtifactPaths = globSync([
+    'apps/web/dist/**/*',
+    'packages/*/*/lib/client.js',
+    'packages/*/*/lib/client.js.map',
+  ], { cwd: REPO_ROOT })
+    .map(path => join(REPO_ROOT, path))
+    .filter(path => statSync(path).isFile())
+  const originalClientArtifacts = await Promise.all(
+    clientArtifactPaths.map(async path => [path, await readFile(path)] as const),
+  )
   const originalSource = await readFile(sourcePath)
-  const originalBundle = await readFile(bundlePath)
   const oldText = 'Into the Unknown'
   const sourceNeedle = "'hero.headline': 'Into the Unknown'"
   const newText = `HMR UPDATED ${'x'.repeat(80)}`
+  const bootstrapPassword = 'hmr browser bootstrap password'
   const updatedSource = originalSource.toString().replace(sourceNeedle, `'hero.headline': '${newText}'`)
   if (updatedSource === originalSource.toString()) throw new Error(`HMR source lacks ${JSON.stringify(sourceNeedle)}`)
 
@@ -89,14 +100,19 @@ it('hot-reloads a real client-plugin source edit without refreshing the page', a
   const failures: unknown[] = []
   try {
     subprocessFiber = await subprocessCtx.plugin(LocalSubprocessRuntime)
-    watcher = subprocessCtx.subprocess.spawn(spawnSpec(['pnpm', 'run', 'dev:web'], REPO_ROOT))
+    watcher = subprocessCtx.subprocess.spawn(spawnSpec(
+      ['pnpm', 'run', 'dev:web'],
+      REPO_ROOT,
+      { ...clientBuildEnvironment },
+    ))
     await waitForOutput(watcher, /dev-web: watching/, 'pnpm run dev:web')
     host = subprocessCtx.subprocess.spawn(spawnSpec(
-      [process.execPath, binPath, 'web', '--port', '0'],
+      [process.execPath, binPath, 'web', '--no-open', '--port', '0'],
       world,
       {
         DEEPSEEK_API_KEY: 'keyless-hmr-no-call',
         DSH_HOME: join(world, '.dsh'),
+        HARNESS_BOOTSTRAP_PASSWORD: bootstrapPassword,
       },
     ))
     const baseUrl = await waitForOutput(host, /dsh web: (http:\/\/[^\s]+)/, 'built dsh web')
@@ -104,10 +120,22 @@ it('hot-reloads a real client-plugin source edit without refreshing the page', a
     const page = await browser.newPage()
     const pageErrors: string[] = []
     page.on('pageerror', error => pageErrors.push(String(error)))
-    await page.goto(baseUrl, { waitUntil: 'load' })
+    const login = await fetch(new URL('/auth/login/local', baseUrl), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: baseUrl },
+      body: JSON.stringify({ username: 'admin', password: bootstrapPassword }),
+    })
+    const cookie = login.headers.get('set-cookie')?.split(';', 1)[0]?.split('=', 2)
+    if (login.status !== 200 || cookie?.[0] === undefined || cookie[1] === undefined) {
+      throw new Error('HMR browser test could not establish an administrator session')
+    }
+    await page.context().addCookies([{ name: cookie[0], value: cookie[1], url: baseUrl }])
+    await page.goto(new URL('/?view=runtime', baseUrl).href, { waitUntil: 'load' })
     await page.getByText(oldText, { exact: true }).waitFor({ timeout: 15_000 })
     const pageIdentity = await page.evaluate(() => {
-      const identity = crypto.randomUUID()
+      // In-page code: an import would not survive serialization, and the page
+      // entropy source available in every context is getRandomValues.
+      const identity = Array.from(crypto.getRandomValues(new Uint8Array(8)), byte => byte.toString(16).padStart(2, '0')).join('')
       Object.defineProperty(window, '__dshHmrPageIdentity', { value: identity })
       return identity
     })
@@ -122,7 +150,17 @@ it('hot-reloads a real client-plugin source edit without refreshing the page', a
   } finally {
     await writeFile(sourcePath, originalSource).catch((error: unknown) => failures.push(error))
     if (watcher !== undefined) await stopTree(watcher).catch((error: unknown) => failures.push(error))
-    await writeFile(bundlePath, originalBundle).catch((error: unknown) => failures.push(error))
+    const originalPaths = new Set(originalClientArtifacts.map(([path]) => path))
+    const currentWebArtifacts = globSync('apps/web/dist/**/*', { cwd: REPO_ROOT })
+      .map(path => join(REPO_ROOT, path))
+      .filter(path => statSync(path).isFile())
+    await Promise.all(currentWebArtifacts
+      .filter(path => !originalPaths.has(path))
+      .map(path => rm(path, { force: true }).catch((error: unknown) => failures.push(error))))
+    await Promise.all(originalClientArtifacts.map(async ([path, content]) => {
+      await mkdir(dirname(path), { recursive: true }).catch((error: unknown) => failures.push(error))
+      await writeFile(path, content).catch((error: unknown) => failures.push(error))
+    }))
     if (host !== undefined) await stopTree(host).catch((error: unknown) => failures.push(error))
     await browser?.close().catch((error: unknown) => failures.push(error))
     await subprocessFiber?.dispose().catch((error: unknown) => failures.push(error))

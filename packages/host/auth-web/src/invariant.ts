@@ -9,7 +9,7 @@ const PACKAGE_NAME = '@deepseek-ai/dsh-host-auth-web'
 export const name = 'host-auth-web-invariant'
 /** Service required before the companion can reserve package ownership. */
 export const inject = ['invariants']
-/** Route ownership is covered by the WebServer registration invariant. */
+/** No runtime invariant: route ownership is covered by the WebServer registration invariant. */
 const install: InvariantInstaller = () => {}
 /** Register this package's invariant companion. */
 export const apply = (ctx: Context): Promise<() => void> =>

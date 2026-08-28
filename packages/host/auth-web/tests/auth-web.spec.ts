@@ -175,6 +175,13 @@ async function boot(): Promise<{ context: Context; origin: string }> {
     name: 'auth-web-test-deps',
     apply(context: Context) {
       context.provide('sessions', { list: () => [] } as never)
+      context.provide('connection', {
+        registerAuthenticator: () => () => Promise.resolve(),
+      } as never)
+      context.provide('sessionController', { inspect: vi.fn() } as never)
+      context.provide('typertGateway', {
+        registerMiddleware: () => () => Promise.resolve(),
+      } as never)
       context.provide('workspaceRegistry', {
         list: () => workspaces,
         async create(path: string) {
