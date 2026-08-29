@@ -405,6 +405,25 @@ describe('dsh web keyless CLI smoke', () => {
       })
       await page.goto(readyUrl)
       await page.getByRole('heading', { name: '登录你的工作空间', exact: true }).waitFor({ timeout: 30_000 })
+      const loginPanel = page.getByRole('region', { name: '登录你的工作空间' })
+      const [loginPanelStyle, loginInputStyle, loginButtonStyle] = await Promise.all([
+        loginPanel.evaluate((element) => {
+          const style = getComputedStyle(element)
+          return { background: style.backgroundColor, border: style.borderTopWidth, shadow: style.boxShadow }
+        }),
+        page.getByRole('textbox', { name: '用户名' }).evaluate((element) => {
+          const style = getComputedStyle(element)
+          return { background: style.backgroundColor, border: style.borderTopWidth }
+        }),
+        page.getByRole('button', { name: '登录', exact: true }).evaluate((element) => {
+          const style = getComputedStyle(element)
+          return { background: style.backgroundColor, color: style.color }
+        }),
+      ])
+      expect(loginPanelStyle).toMatchObject({ background: 'rgba(255, 255, 255, 0.93)', border: '1px' })
+      expect(loginPanelStyle.shadow).not.toBe('none')
+      expect(loginInputStyle).toEqual({ background: 'rgb(249, 250, 251)', border: '1px' })
+      expect(loginButtonStyle).toEqual({ background: 'rgb(65, 118, 230)', color: 'rgb(255, 255, 255)' })
       compareServerSnapshot(SERVER_LOGIN_EXPECTED, await page.locator('body').ariaSnapshot())
       expect(remoteRequests).toEqual([])
       expect(remoteSockets).toEqual([])

@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-08-14-single-process-multi-user-server.md
-2026-08-14-single-process-multi-user-server.md: 287cdb0524aa62934ad47107960b48a72967916c
-2026-08-14-single-process-multi-user-server.zh.md: b5ab769f7c7866949cdcd323498d70cfc587e333
+2026-08-14-single-process-multi-user-server.md: cac7a6d82c636011d07ce75e9d19146c4892e71a
+2026-08-14-single-process-multi-user-server.zh.md: 84f2afc437259c4dbb9276d8224f2df306401be9
