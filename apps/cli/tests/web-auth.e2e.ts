@@ -15,8 +15,10 @@ import { describe, expect, it } from 'vitest'
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url))
 const DSH_SOURCE_BIN = join(REPO_ROOT, 'apps/cli/src/bin.ts')
+const DSH_BUILT_BIN = join(REPO_ROOT, 'apps/cli/lib/bin.js')
 const TSX_LOADER = pathToFileURL(createRequire(join(REPO_ROOT, 'package.json')).resolve('tsx')).href
 const TEST_BOOTSTRAP_PASSWORD = 'real cli bootstrap password'
+const TEST_MEMBER_PASSWORD = 'real cli ordinary password'
 
 interface RunningWeb {
   readonly child: ChildProcess
@@ -66,11 +68,13 @@ function cleanEnvironment(root: string, dshHome: string): NodeJS.ProcessEnv {
   }
 }
 
-/** Start the public source CLI and wait for its readiness URL. */
+/** Start the public source or built CLI selected by the owning test lane and wait for its readiness URL. */
 async function startWeb(root: string, dshHome: string, port: number): Promise<RunningWeb> {
+  const entry = process.env.DSH_EXAMPLE_MODE === 'lib'
+    ? [DSH_BUILT_BIN]
+    : ['--import', TSX_LOADER, DSH_SOURCE_BIN]
   const child = spawn(process.execPath, [
-    '--import', TSX_LOADER,
-    DSH_SOURCE_BIN,
+    ...entry,
     'web',
     '--no-open',
     '--port', String(port),
@@ -197,12 +201,38 @@ describe('dsh web authentication through the real CLI', () => {
         result: { ok: true, value: { namespaces: expect.any(Array) as unknown } },
       })
 
+      const createdMember = await fetch(new URL('/auth/users', firstUrl), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie, origin: firstUrl.origin },
+        body: JSON.stringify({ username: 'member', password: TEST_MEMBER_PASSWORD, role: 'user' }),
+      })
+      expect(createdMember.status).toBe(201)
+      const memberLogin = await fetch(new URL('/auth/login/local', firstUrl), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: firstUrl.origin },
+        body: JSON.stringify({ username: 'member', password: TEST_MEMBER_PASSWORD }),
+      })
+      expect(memberLogin.status).toBe(200)
+      const memberSetCookie = memberLogin.headers.get('set-cookie')
+      if (memberSetCookie === null) throw new Error('real CLI member login omitted Set-Cookie')
+      const memberCookie = memberSetCookie.split(';', 1)[0]!
+      const ordinarySettings = await describeSettings(port, firstUrl.host, memberCookie)
+      expect(ordinarySettings.status).toBe(200)
+      expect(JSON.parse(ordinarySettings.body) as unknown).toMatchObject({
+        type: 'server-response',
+        rpcId: 'web-auth-real-cli',
+        result: { ok: false, error: { code: 'forbidden', message: 'administrator role is required' } },
+      })
+
       await stopWeb(first)
       first = undefined
       second = await startWeb(root, dshHome, port)
       const secondUrl = new URL(second.launchUrl)
       expect(secondUrl.search).toBe('')
       expect((await describeSettings(port, secondUrl.host, cookie)).status).toBe(200)
+      expect(JSON.parse((await describeSettings(port, secondUrl.host, memberCookie)).body) as unknown).toMatchObject({
+        result: { ok: false, error: { code: 'forbidden' } },
+      })
 
       const credentialMode = (await stat(join(dshHome, '.credentials.yaml'))).mode & 0o777
       expect(credentialMode).toBe(0o600)

@@ -54,4 +54,4 @@ Web CLI 默认绑定回环地址。它的启动提供方在发布配置前会等
 
 OIDC 非敏感参数和不可变的 `(issuer, sub) → UserId` 绑定继续保存在仅属主可访问的 `oidc.json` 中；客户端密钥通过现有 credentials 提供方保存在 `HARNESS_OIDC_CLIENT_SECRET` 下。首选用户名声明绝不选择已有本地账号，配置的 `groups` 管理员值只在外部身份首次创建时决定角色。当前服务有意不提供协作：项目只属于一个用户，不存在共享或成员模型。身份提供方协议没有上游退出端点，因此 Harness 退出只撤销本地会话。
 
-验证分别覆盖真实认证提供方测试；拒绝匿名用户和普通用户访问系统设置、并证明凭据响应已脱敏的真实 Loader/WebServer/认证 HTTP 组合测试；用于执行发现、PKCE、nonce、JWKS 验证、普通用户创建和重放拒绝的本地签名 OIDC 提供方；已启用、未启用和非 Flash 请求的适配器组合测试；用户级 API 与事件测试；普通用户／管理员动态 Cordis preset、工具守卫与 Remote runner 测试；文件系统符号链接逃逸测试；沙箱 profile 与上限测试；Web shell 测试；以及常规 Web 构建和浏览器主流程。
+验证分别覆盖真实认证提供方测试；拒绝匿名用户和普通用户访问系统设置、并证明凭据响应已脱敏的真实 Loader/WebServer/认证 HTTP 组合测试；用于执行发现、PKCE、nonce、JWKS 验证、普通用户创建和重放拒绝的本地签名 OIDC 提供方；已启用、未启用和非 Flash 请求的适配器组合测试；用户级 API 与事件测试；普通用户／管理员动态 Cordis preset、工具守卫与 Remote runner 测试；文件系统符号链接逃逸测试；沙箱 profile 与上限测试；Web shell 测试；以及常规 Web 构建和浏览器主流程。`built-bin` 冒烟测试会启动生产 `lib/` 依赖图，并断言普通用户调用仅管理员可用的 Remote 接口时保留 `forbidden` 失败码，以检测插件 bundle 中被复制的 Typert 失败类。
