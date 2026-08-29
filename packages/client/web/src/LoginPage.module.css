@@ -60,14 +60,14 @@
   margin-top: clamp(34px, 4.7vh, 48px);
   box-sizing: border-box;
   padding: clamp(42px, 5.4vh, 56px) 50px 44px;
-  border: 1px solid var(--dsw-specific-login-focus, rgba(65, 118, 230, 0.16));
+  border: 1px solid var(--dsw-specific-login-focus, rgba(65, 118, 230, 0.22));
   border-radius: 28px;
-  background: var(--dsw-specific-login-panel, rgba(255, 255, 255, 0.93));
+  background: var(--dsw-specific-login-panel, rgba(255, 255, 255, 0.96));
   box-shadow: var(
     --dsw-shadow-lv3,
     0 0 1px rgba(0, 0, 0, 0.2),
     0 0 4px rgba(0, 0, 0, 0.02),
-    0 12px 32px rgba(0, 0, 0, 0.08)
+    0 18px 48px rgba(24, 51, 102, 0.14)
   );
   backdrop-filter: blur(22px) saturate(108%);
 }
@@ -103,8 +103,8 @@
   justify-content: space-between;
   height: 74px;
   padding: 0 18px;
-  border: 1px solid var(--dsw-specific-login-border, rgba(65, 118, 230, 0.24));
-  background: var(--dsw-specific-login-control, rgba(255, 255, 255, 0.78));
+  border: 2px solid var(--dsw-specific-login-border, rgba(65, 118, 230, 0.38));
+  background: var(--dsw-specific-login-control, #f4f7ff);
   color: var(--dsw-specific-login-primary, #4176e6);
   font-size: 19px;
 }
@@ -124,7 +124,7 @@
 
 .ssoButton:disabled {
   cursor: not-allowed;
-  opacity: 0.62;
+  opacity: 0.82;
 }
 
 .buttonMeta {
@@ -173,17 +173,17 @@
   width: 100%;
   height: 54px;
   padding: 0 14px;
-  border: 1px solid var(--dsw-specific-login-border, rgba(65, 118, 230, 0.24));
+  border: 2px solid var(--dsw-specific-login-border, rgba(65, 118, 230, 0.38));
   border-radius: 10px;
   outline: none;
-  background: var(--dsw-specific-login-input, #f9fafb);
+  background: var(--dsw-specific-login-input, #fff);
   color: var(--dsw-specific-login-label-primary, #172554);
   font-size: 16px;
 }
 
 .form input:focus {
   border-color: var(--dsw-specific-login-primary, #4176e6);
-  box-shadow: 0 0 0 3px var(--dsw-specific-login-focus, rgba(65, 118, 230, 0.16));
+  box-shadow: 0 0 0 4px var(--dsw-specific-login-focus, rgba(65, 118, 230, 0.2));
 }
 
 .form input::placeholder {
@@ -193,9 +193,10 @@
 .loginButton {
   height: 62px;
   margin-top: 2px;
-  border: 1px solid var(--dsw-specific-login-primary, #4176e6);
+  border: 2px solid var(--dsw-specific-login-primary, #4176e6);
   background: var(--dsw-specific-login-primary, #4176e6);
   color: var(--dsw-specific-login-primary-label, #fff);
+  box-shadow: 0 8px 20px rgba(45, 96, 207, 0.28);
   font-size: 20px;
 }
 
@@ -203,7 +204,8 @@
 .loginButton:focus-visible {
   border-color: var(--dsw-specific-login-primary-hover, #679efe);
   background: var(--dsw-specific-login-primary-hover, #679efe);
-  box-shadow: 0 0 0 3px var(--dsw-specific-login-focus, rgba(65, 118, 230, 0.16));
+  box-shadow: 0 0 0 4px var(--dsw-specific-login-focus, rgba(65, 118, 230, 0.2)),
+    0 8px 20px rgba(45, 96, 207, 0.28);
 }
 
 .loginButton:disabled {

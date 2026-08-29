@@ -406,10 +406,14 @@ describe('dsh web keyless CLI smoke', () => {
       await page.goto(readyUrl)
       await page.getByRole('heading', { name: '登录你的工作空间', exact: true }).waitFor({ timeout: 30_000 })
       const loginPanel = page.getByRole('region', { name: '登录你的工作空间' })
-      const [loginPanelStyle, loginInputStyle, loginButtonStyle] = await Promise.all([
+      const [loginPanelStyle, ssoButtonStyle, loginInputStyle, loginButtonStyle] = await Promise.all([
         loginPanel.evaluate((element) => {
           const style = getComputedStyle(element)
           return { background: style.backgroundColor, border: style.borderTopWidth, shadow: style.boxShadow }
+        }),
+        page.getByRole('button', { name: /使用企业 SSO 登录/u }).evaluate((element) => {
+          const style = getComputedStyle(element)
+          return { background: style.backgroundColor, border: style.borderTopWidth, opacity: style.opacity }
         }),
         page.getByRole('textbox', { name: '用户名' }).evaluate((element) => {
           const style = getComputedStyle(element)
@@ -417,13 +421,24 @@ describe('dsh web keyless CLI smoke', () => {
         }),
         page.getByRole('button', { name: '登录', exact: true }).evaluate((element) => {
           const style = getComputedStyle(element)
-          return { background: style.backgroundColor, color: style.color }
+          return {
+            background: style.backgroundColor,
+            border: style.borderTopWidth,
+            color: style.color,
+            shadow: style.boxShadow,
+          }
         }),
       ])
-      expect(loginPanelStyle).toMatchObject({ background: 'rgba(255, 255, 255, 0.93)', border: '1px' })
+      expect(loginPanelStyle).toMatchObject({ background: 'rgba(255, 255, 255, 0.96)', border: '1px' })
       expect(loginPanelStyle.shadow).not.toBe('none')
-      expect(loginInputStyle).toEqual({ background: 'rgb(249, 250, 251)', border: '1px' })
-      expect(loginButtonStyle).toEqual({ background: 'rgb(65, 118, 230)', color: 'rgb(255, 255, 255)' })
+      expect(ssoButtonStyle).toEqual({ background: 'rgb(244, 247, 255)', border: '2px', opacity: '0.82' })
+      expect(loginInputStyle).toEqual({ background: 'rgb(255, 255, 255)', border: '2px' })
+      expect(loginButtonStyle).toMatchObject({
+        background: 'rgb(65, 118, 230)',
+        border: '2px',
+        color: 'rgb(255, 255, 255)',
+      })
+      expect(loginButtonStyle.shadow).not.toBe('none')
       compareServerSnapshot(SERVER_LOGIN_EXPECTED, await page.locator('body').ariaSnapshot())
       expect(remoteRequests).toEqual([])
       expect(remoteSockets).toEqual([])
