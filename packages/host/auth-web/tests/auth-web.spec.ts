@@ -2,7 +2,7 @@
 
 import { createHash, createSign, generateKeyPairSync } from 'node:crypto'
 import { createServer, request as httpRequest, type Server } from 'node:http'
-import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -166,6 +166,8 @@ async function startOidcProvider(): Promise<{
 interface BootOptions {
   readonly secureCookie?: boolean
   readonly maxBodyBytes?: number
+  readonly projectFileMaxEntries?: number
+  readonly projectFilePreviewMaxBytes?: number
 }
 
 interface BootResult {
@@ -198,6 +200,8 @@ async function boot(options: BootOptions = {}): Promise<BootResult> {
     '  config:',
     `    secureCookie: ${String(options.secureCookie ?? false)}`,
     `    maxBodyBytes: ${String(options.maxBodyBytes ?? 64 * 1024)}`,
+    `    projectFileMaxEntries: ${String(options.projectFileMaxEntries ?? 1_000)}`,
+    `    projectFilePreviewMaxBytes: ${String(options.projectFilePreviewMaxBytes ?? 512 * 1024)}`,
     '',
   ].join('\n'))
 
@@ -368,7 +372,11 @@ describe('real authentication route composition', () => {
         writable: true,
         enabledUsers: 0,
       },
-      limits: { maxBodyBytes: 64 * 1024 },
+      limits: {
+        maxBodyBytes: 64 * 1024,
+        projectFileMaxEntries: 1_000,
+        projectFilePreviewMaxBytes: 512 * 1024,
+      },
     })
 
     const createdUser = await fetch(`${origin}/auth/users`, {
@@ -448,6 +456,124 @@ describe('real authentication route composition', () => {
     const oidc = await fetch(`${origin}/auth/oidc`, { redirect: 'manual' })
     expect(oidc.status).toBe(302)
     expect(oidc.headers.get('location')).toBe('/?oidc_error=unavailable')
+  })
+
+  it('browses, previews, and downloads only the authenticated user project files', { timeout: 60_000 }, async () => {
+    const { origin } = await boot()
+    const adminCookie = await localLogin(origin)
+    expect((await fetch(`${origin}/auth/projects/missing/files`)).status).toBe(401)
+
+    expect((await fetch(`${origin}/auth/users`, {
+      method: 'POST',
+      headers: jsonHeaders(origin, adminCookie),
+      body: JSON.stringify({ username: 'file-member', password: 'ordinary member password' }),
+    })).status).toBe(201)
+    const memberCookie = await localLogin(origin, 'file-member', 'ordinary member password')
+
+    const adminProjectResponse = await fetch(`${origin}/auth/projects`, {
+      method: 'POST',
+      headers: jsonHeaders(origin, adminCookie),
+      body: JSON.stringify({ name: 'Admin files' }),
+    })
+    const adminProject = await adminProjectResponse.json() as { project: { id: string; path: string } }
+    const memberProjectResponse = await fetch(`${origin}/auth/projects`, {
+      method: 'POST',
+      headers: jsonHeaders(origin, memberCookie),
+      body: JSON.stringify({ name: 'Member files' }),
+    })
+    const memberProject = await memberProjectResponse.json() as { project: { id: string; path: string } }
+
+    await mkdir(join(adminProject.project.path, 'src'))
+    await writeFile(join(adminProject.project.path, 'README.md'), '# Managed project\n\nPrivate preview.\n')
+    await writeFile(join(adminProject.project.path, 'LICENSE'), 'internal test license\n')
+    await writeFile(join(adminProject.project.path, 'archive.bin'), Buffer.from([1, 2, 3]))
+    await writeFile(join(adminProject.project.path, 'embedded.txt'), Buffer.from([65, 0, 66]))
+    await writeFile(join(adminProject.project.path, 'invalid.txt'), Buffer.from([0xff]))
+    await writeFile(join(adminProject.project.path, '中文.md'), '# 下载内容\n')
+    await writeFile(join(adminProject.project.path, '.env'), 'SECRET=hidden\n')
+    await writeFile(join(adminProject.project.path, 'src', 'main.ts'), 'export const ready = true\n')
+    await mkdir(join(adminProject.project.path, 'z-late-dir'))
+    const outside = join(root as string, 'outside-secret.txt')
+    await writeFile(outside, 'outside\n')
+    await symlink(outside, join(adminProject.project.path, 'outside-link'))
+    await writeFile(join(memberProject.project.path, 'member.txt'), 'member owned\n')
+
+    const adminFiles = `${origin}/auth/projects/${encodeURIComponent(adminProject.project.id)}/files`
+    const memberFiles = `${origin}/auth/projects/${encodeURIComponent(memberProject.project.id)}/files`
+    const rootListing = await fetch(adminFiles, { headers: { cookie: adminCookie } })
+    expect(rootListing.status).toBe(200)
+    const rootBody = await rootListing.json() as {
+      directory: { path: string; entries: Array<{ name: string; kind: string; previewable: boolean }> }
+    }
+    expect(rootBody.directory.path).toBe('')
+    expect(rootBody.directory.entries.map(entry => entry.name)).toEqual([
+      'src', 'z-late-dir', '中文.md', 'archive.bin', 'embedded.txt', 'invalid.txt', 'LICENSE', 'README.md',
+    ])
+    expect(rootBody.directory.entries.find(entry => entry.name === 'README.md')).toMatchObject({
+      kind: 'file', previewable: true,
+    })
+    expect(rootBody.directory.entries.find(entry => entry.name === 'archive.bin')).toMatchObject({
+      kind: 'file', previewable: false,
+    })
+
+    const nested = new URL(adminFiles)
+    nested.searchParams.set('path', 'src')
+    expect(await (await fetch(nested, { headers: { cookie: adminCookie } })).json()).toMatchObject({
+      directory: { path: 'src', entries: [{ name: 'main.ts', path: 'src/main.ts', previewable: true }] },
+    })
+
+    const markdownPreview = new URL(`${adminFiles}/preview`)
+    markdownPreview.searchParams.set('path', 'README.md')
+    expect(await (await fetch(markdownPreview, { headers: { cookie: adminCookie } })).json()).toMatchObject({
+      preview: {
+        file: { name: 'README.md', path: 'README.md', format: 'markdown' },
+        content: '# Managed project\n\nPrivate preview.\n',
+      },
+    })
+    const textPreview = new URL(`${adminFiles}/preview`)
+    textPreview.searchParams.set('path', 'LICENSE')
+    expect(await (await fetch(textPreview, { headers: { cookie: adminCookie } })).json()).toMatchObject({
+      preview: { file: { format: 'text' }, content: 'internal test license\n' },
+    })
+
+    const download = new URL(`${adminFiles}/download`)
+    download.searchParams.set('path', '中文.md')
+    const downloaded = await fetch(download, { headers: { cookie: adminCookie } })
+    expect(downloaded.status).toBe(200)
+    expect(downloaded.headers.get('content-type')).toBe('application/octet-stream')
+    expect(downloaded.headers.get('content-disposition')).toContain("filename*=UTF-8''%E4%B8%AD%E6%96%87.md")
+    expect(downloaded.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(await downloaded.text()).toBe('# 下载内容\n')
+
+    for (const path of ['../outside-secret.txt', '.env', 'src//main.ts', 'src\\main.ts', '/etc/passwd', 'bad\0path']) {
+      const invalid = new URL(adminFiles)
+      invalid.searchParams.set('path', path)
+      expect((await fetch(invalid, { headers: { cookie: adminCookie } })).status, path).toBe(400)
+    }
+    for (const path of ['README.md', 'missing']) {
+      const invalid = new URL(adminFiles)
+      invalid.searchParams.set('path', path)
+      expect((await fetch(invalid, { headers: { cookie: adminCookie } })).status).toBe(path === 'missing' ? 404 : 400)
+    }
+    const linked = new URL(`${adminFiles}/preview`)
+    linked.searchParams.set('path', 'outside-link')
+    expect((await fetch(linked, { headers: { cookie: adminCookie } })).status).toBe(403)
+    for (const path of ['', 'src', 'archive.bin', 'embedded.txt', 'invalid.txt']) {
+      const invalid = new URL(`${adminFiles}/preview`)
+      if (path !== '') invalid.searchParams.set('path', path)
+      expect((await fetch(invalid, { headers: { cookie: adminCookie } })).status, path).toBe(400)
+    }
+    for (const path of ['', 'src']) {
+      const invalid = new URL(`${adminFiles}/download`)
+      if (path !== '') invalid.searchParams.set('path', path)
+      expect((await fetch(invalid, { headers: { cookie: adminCookie } })).status, path).toBe(400)
+    }
+
+    expect((await fetch(memberFiles, { headers: { cookie: adminCookie } })).status).toBe(404)
+    expect((await fetch(adminFiles, { headers: { cookie: memberCookie } })).status).toBe(404)
+    expect(await (await fetch(memberFiles, { headers: { cookie: memberCookie } })).json()).toMatchObject({
+      directory: { entries: [{ name: 'member.txt' }] },
+    })
   })
 
   it('completes PKCE OIDC login, keeps the client secret server-side, and creates an ordinary isolated user', { timeout: 60_000 }, async () => {
@@ -1009,7 +1135,12 @@ describe('real authentication route composition', () => {
   })
 
   it('honors secure cookies and the configured request limit', { timeout: 60_000 }, async () => {
-    const { origin } = await boot({ secureCookie: true, maxBodyBytes: 1024 })
+    const { origin } = await boot({
+      secureCookie: true,
+      maxBodyBytes: 1024,
+      projectFileMaxEntries: 1,
+      projectFilePreviewMaxBytes: 1024,
+    })
     const cookie = await localLogin(origin)
     const response = await fetch(`${origin}/auth/logout`, {
       method: 'POST',
@@ -1040,5 +1171,20 @@ describe('real authentication route composition', () => {
     })).status).toBe(200)
     const start = await fetch(`${origin}/auth/oidc/start`, { redirect: 'manual' })
     expect(start.headers.get('set-cookie')).toContain('Secure')
+
+    const projectResponse = await fetch(`${origin}/auth/projects`, {
+      method: 'POST',
+      headers: jsonHeaders(origin, activeCookie),
+      body: JSON.stringify({ name: 'Limited files' }),
+    })
+    const project = await projectResponse.json() as { project: { id: string; path: string } }
+    await writeFile(join(project.project.path, 'one.txt'), 'one\n')
+    await writeFile(join(project.project.path, 'two.txt'), 'two\n')
+    await writeFile(join(project.project.path, 'large.txt'), 'x'.repeat(1025))
+    const files = `${origin}/auth/projects/${encodeURIComponent(project.project.id)}/files`
+    expect((await fetch(files, { headers: { cookie: activeCookie } })).status).toBe(400)
+    const preview = new URL(`${files}/preview`)
+    preview.searchParams.set('path', 'large.txt')
+    expect((await fetch(preview, { headers: { cookie: activeCookie } })).status).toBe(400)
   })
 })

@@ -907,10 +907,14 @@ export interface Config {
   secureCookie?: boolean
   /** Maximum JSON request body. Defaults to 64 KiB. */
   maxBodyBytes?: number
+  /** Maximum visible entries returned for one project directory. Defaults to 1,000. */
+  projectFileMaxEntries?: number
+  /** Maximum UTF-8 file preview size. Defaults to 512 KiB. */
+  projectFilePreviewMaxBytes?: number
 }
 ```
 
-Source: [`packages/host/auth-web/src/index.ts:55`](../packages/host/auth-web/src/index.ts)
+Source: [`packages/host/auth-web/src/index.ts:57`](../packages/host/auth-web/src/index.ts)
 
 <a id="deepseek-aidsh-host-directory-picker-browse"></a>
 

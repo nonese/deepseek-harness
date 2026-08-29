@@ -7,6 +7,7 @@ import {
   IconUserOutline16,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ClientAuthUser } from './auth-state.ts'
+import { ProjectFileBrowser } from './ProjectFileBrowser.tsx'
 import css from './HarnessPortal.module.css'
 import type { WebTranslate } from './locales.ts'
 
@@ -105,6 +106,8 @@ interface SystemSettingsResponse {
   sharedDeepSeek: SharedDeepSeekStatus & { enabledUsers: number }
   limits: {
     maxBodyBytes: number
+    projectFileMaxEntries: number
+    projectFilePreviewMaxBytes: number
   }
 }
 
@@ -193,6 +196,7 @@ export function HarnessPortal(props: HarnessPortalProps) {
   const [error, setError] = useState<string>()
   const [creating, setCreating] = useState(false)
   const [projectName, setProjectName] = useState('')
+  const [browsingProject, setBrowsingProject] = useState<ProjectView>()
 
   const selectView = useCallback((next: PortalView): void => {
     if (typeof location !== 'undefined') {
@@ -315,15 +319,22 @@ export function HarnessPortal(props: HarnessPortalProps) {
                     {loading && <div className={css.empty}>{t('projects.loading')}</div>}
                     {!loading && projects.length === 0 && <div className={css.empty}>{t('projects.empty')}</div>}
                     {projects.map(project => (
-                      <button className={css.projectRow} type="button" key={project.id} onClick={() => { openProject(project) }}>
-                        <span className={css.projectMark}><IconFolderClose16 size={20} /></span>
-                        <span className={css.projectMain}>
-                          <strong>{project.name}</strong>
-                          <span>{t('projects.autoManaged')} {project.sessionCount} {t('projects.sessionCount')}</span>
-                        </span>
+                      <div className={css.projectRow} key={project.id}>
+                        <button className={css.projectOpen} type="button" onClick={() => { openProject(project) }}>
+                          <span className={css.projectMark}><IconFolderClose16 size={20} /></span>
+                          <span className={css.projectMain}>
+                            <strong>{project.name}</strong>
+                            <span>{t('projects.autoManaged')} {project.sessionCount} {t('projects.sessionCount')}</span>
+                          </span>
+                        </button>
                         <span className={css.projectTime}>{relativeTime(project.updatedAt, t)}</span>
-                        <span className={css.openText}>{t('action.open')} <IconChevronRightOutline14 size={14} /></span>
-                      </button>
+                        <button className={css.fileText} type="button" onClick={() => { setBrowsingProject(project) }}>
+                          <IconFolderClose16 size={15} />{t('projects.files')}
+                        </button>
+                        <button className={css.openText} type="button" onClick={() => { openProject(project) }}>
+                          {t('action.open')} <IconChevronRightOutline14 size={14} />
+                        </button>
+                      </div>
                     ))}
                   </div>
                 </section>
@@ -360,6 +371,14 @@ export function HarnessPortal(props: HarnessPortalProps) {
             </div>
           </form>
         </div>
+      )}
+      {browsingProject !== undefined && (
+        <ProjectFileBrowser
+          key={browsingProject.id}
+          project={browsingProject}
+          t={t}
+          onClose={() => { setBrowsingProject(undefined) }}
+        />
       )}
     </div>
   )

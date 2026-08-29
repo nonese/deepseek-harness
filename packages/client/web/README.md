@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-client-web` boots the web GUI: in a multi-user deployment it first probes the durable browser session and renders the login page without creating the client module system, activating client plugins, or opening Remote transports. The Host-provided index may already preload immutable bundle bytes, but their queued factories do not run before authentication. The authenticated shell wraps the activated plugin runtime with private projects, personal settings, and role-gated administrator pages. A framework-free boot page reports per-entry status, so a failing bundle or plugin stays visible instead of a blank screen. The package also defines the shared module table (`PLATFORM_MODULES`) that every dynamic bundle resolves its externals against. The model never sees this package.
+`dsh-client-web` boots the web GUI: in a multi-user deployment it first probes the durable browser session and renders the login page without creating the client module system, activating client plugins, or opening Remote transports. The Host-provided index may already preload immutable bundle bytes, but their queued factories do not run before authentication. The authenticated shell wraps the activated plugin runtime with private projects, project file browsing and preview, personal settings, and role-gated administrator pages. A framework-free boot page reports per-entry status, so a failing bundle or plugin stays visible instead of a blank screen. The package also defines the shared module table (`PLATFORM_MODULES`) that every dynamic bundle resolves its externals against. The model never sees this package.
 
 ## Table of Contents
 
@@ -26,6 +26,8 @@ English | [中文](README.zh.md)
 ## Use this package
 
 Use it when you assemble the browser application: `apps/web`'s Vite entry runs `new AppWebEntry(container).run()` against the mount point. When the Host injects `__HARNESS_MULTI_USER__`, the entry calls `/auth/session` before module creation; anonymous users receive the local/OIDC login shell, and authenticated users activate the plugin graph before the Harness portal mounts. Ordinary single-user compositions retain the direct boot-page flow. A pre-injected page transport is the default ahead of the `seams` override: when `globalThis.__DSH_TRANSPORT__` carries `loadBundle`, the module stage adopts it as the bundle transport and skips the immediate-tier HTTP prefetch, while explicit `seams` still win (for example jsdom tests, where external `<script>` execution cannot reach the page context).
+
+Each managed project row keeps runtime entry separate from its Files action. Files opens a same-origin dialog for directory navigation, bounded text or Markdown preview, and attachment download; the Host remains authoritative for ownership, hidden-entry, symbolic-link, and path validation.
 
 The shell base styles apply automatic CJK/Latin spacing to ordinary content in supporting browsers. Semantic code and terminal, diff, read, and search output containers retain literal source spacing and column alignment; browsers without `text-autospace` support ignore both declarations.
 

@@ -4,9 +4,11 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { mkdir } from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
+import { lstat, mkdir, opendir, readFile } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
-import { dirname, resolve } from 'node:path'
+import { basename, dirname, extname, isAbsolute, resolve } from 'node:path'
+import { pipeline } from 'node:stream/promises'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
@@ -59,10 +61,16 @@ export interface Config {
   secureCookie?: boolean
   /** Maximum JSON request body. Defaults to 64 KiB. */
   maxBodyBytes?: number
+  /** Maximum visible entries returned for one project directory. Defaults to 1,000. */
+  projectFileMaxEntries?: number
+  /** Maximum UTF-8 file preview size. Defaults to 512 KiB. */
+  projectFilePreviewMaxBytes?: number
 }
 
 const DEFAULT_COOKIE_NAME = 'harness_session'
 const DEFAULT_MAX_BODY_BYTES = 64 * 1024
+const DEFAULT_PROJECT_FILE_MAX_ENTRIES = 1_000
+const DEFAULT_PROJECT_FILE_PREVIEW_MAX_BYTES = 512 * 1024
 const OIDC_CLIENT_SECRET_ENV = 'HARNESS_OIDC_CLIENT_SECRET'
 const OIDC_FLOW_TTL_MS = 10 * 60 * 1000
 const MAX_PENDING_OIDC_FLOWS = 256
@@ -73,6 +81,9 @@ export const Config: z<Config> = z.object({
   cookieName: z.string().default(DEFAULT_COOKIE_NAME),
   secureCookie: z.boolean().default(false),
   maxBodyBytes: z.natural().min(1024).max(1024 * 1024).default(DEFAULT_MAX_BODY_BYTES),
+  projectFileMaxEntries: z.natural().min(1).max(10_000).default(DEFAULT_PROJECT_FILE_MAX_ENTRIES),
+  projectFilePreviewMaxBytes: z.natural().min(1024).max(10 * 1024 * 1024)
+    .default(DEFAULT_PROJECT_FILE_PREVIEW_MAX_BYTES),
 })
 
 interface JsonObject {
@@ -427,12 +438,174 @@ function projectView(ctx: Context, principal: AuthPrincipal) {
     .sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
+interface ProjectFileEntry {
+  name: string
+  path: string
+  kind: 'directory' | 'file'
+  size?: number
+  updatedAt: number
+  previewable: boolean
+}
+
+const PROJECT_TEXT_EXTENSIONS = new Set([
+  '.c', '.cc', '.conf', '.cpp', '.css', '.csv', '.go', '.h', '.hpp', '.html', '.ini', '.java', '.js', '.json',
+  '.jsx', '.log', '.md', '.mdx', '.mjs', '.py', '.rb', '.rs', '.sh', '.sql', '.svg', '.toml', '.ts', '.tsx',
+  '.txt', '.xml', '.yaml', '.yml',
+])
+const PROJECT_TEXT_FILENAMES = new Set(['dockerfile', 'license', 'makefile', 'readme'])
+
+function projectFilePreviewable(name: string, size: number, previewMaxBytes: number): boolean {
+  if (size > previewMaxBytes) return false
+  const normalized = name.toLocaleLowerCase('en-US')
+  return PROJECT_TEXT_EXTENSIONS.has(extname(normalized)) || PROJECT_TEXT_FILENAMES.has(normalized)
+}
+
+function projectRelativeSegments(value: string): string[] {
+  if (value === '') return []
+  if (value.includes('\\') || value.includes('\0') || isAbsolute(value)) {
+    throw new AuthError('INVALID_INPUT', '文件路径必须是项目内的相对路径')
+  }
+  const segments = value.split('/')
+  if (segments.some(segment => segment.length === 0 || segment === '.' || segment === '..' || segment.startsWith('.'))) {
+    throw new AuthError('INVALID_INPUT', '不能访问隐藏文件或项目外路径')
+  }
+  return segments
+}
+
+async function projectFileTarget(root: string, relativePath: string): Promise<string> {
+  const segments = projectRelativeSegments(relativePath)
+  let target = resolve(root)
+  for (const segment of segments) {
+    target = resolve(target, segment)
+    let metadata
+    try {
+      metadata = await lstat(target)
+    } catch {
+      throw new AuthError('USER_NOT_FOUND', '文件或目录不存在')
+    }
+    if (metadata.isSymbolicLink()) {
+      throw new AuthError('FORBIDDEN', '不能通过符号链接访问项目文件')
+    }
+  }
+  /* v8 ignore next -- validated segments and per-segment symlink rejection keep this defense-in-depth check true. */
+  if (!managedPathContains(root, target)) throw new AuthError('FORBIDDEN', '不能访问项目外路径')
+  return target
+}
+
+function projectWorkspace(ctx: Context, principal: AuthPrincipal, workspaceId: string) {
+  const projectsRoot = ctx.auth.userPaths(principal.user.id).projects
+  const workspace = ctx.workspaceRegistry.list()
+    .find(candidate => candidate.id === workspaceId && managedPathContains(projectsRoot, candidate.path))
+  if (workspace === undefined) throw new AuthError('USER_NOT_FOUND', '项目不存在')
+  return workspace
+}
+
+async function projectDirectoryEntries(
+  root: string,
+  relativePath: string,
+  maxEntries: number,
+  previewMaxBytes: number,
+): Promise<ProjectFileEntry[]> {
+  const target = await projectFileTarget(root, relativePath)
+  const directoryMetadata = await lstat(target)
+  if (!directoryMetadata.isDirectory()) throw new AuthError('INVALID_INPUT', '文件路径不是目录')
+  const directory = await opendir(target)
+  const entries: ProjectFileEntry[] = []
+  try {
+    for await (const entry of directory) {
+      if (entry.name.startsWith('.') || entry.isSymbolicLink()) continue
+      /* v8 ignore next -- sockets, devices, and named pipes are omitted; portable tests cannot create all of them. */
+      if (!entry.isDirectory() && !entry.isFile()) continue
+      if (entries.length >= maxEntries) throw new AuthError('INVALID_INPUT', '目录项目过多，请进入更具体的子目录')
+      const entryRelativePath = [...projectRelativeSegments(relativePath), entry.name].join('/')
+      const metadata = await lstat(resolve(target, entry.name))
+      /* v8 ignore next -- only a concurrent directory-entry replacement can differ from the checked Dirent. */
+      if (metadata.isSymbolicLink()) continue
+      /* v8 ignore next 2 -- only a concurrent replacement with a special filesystem entry can reach this case. */
+      const kind = metadata.isDirectory() ? 'directory' : metadata.isFile() ? 'file' : undefined
+      /* v8 ignore next -- the undefined case requires the same concurrent special-entry replacement. */
+      if (kind === undefined) continue
+      entries.push({
+        name: entry.name,
+        path: entryRelativePath,
+        kind,
+        ...kind === 'file' ? { size: metadata.size } : {},
+        updatedAt: metadata.mtimeMs,
+        previewable: kind === 'file' && projectFilePreviewable(entry.name, metadata.size, previewMaxBytes),
+      })
+    }
+  } finally {
+    await directory.close().catch(() => {
+      // Async iteration already closes the directory, so this redundant close has no remaining resource to release.
+    })
+  }
+  return entries.sort((a, b) => a.kind === b.kind
+    ? a.name.localeCompare(b.name, 'zh-CN')
+    : a.kind === 'directory' ? -1 : 1)
+}
+
+async function projectFilePreview(root: string, relativePath: string, previewMaxBytes: number) {
+  if (relativePath.length === 0) throw new AuthError('INVALID_INPUT', '请选择要预览的文件')
+  const target = await projectFileTarget(root, relativePath)
+  const metadata = await lstat(target)
+  if (!metadata.isFile()) throw new AuthError('INVALID_INPUT', '所选路径不是文件')
+  const name = basename(target)
+  if (!projectFilePreviewable(name, metadata.size, previewMaxBytes)) {
+    throw new AuthError('INVALID_INPUT', metadata.size > previewMaxBytes ? '文件过大，无法在线预览' : '此文件类型不支持在线预览')
+  }
+  const buffer = await readFile(target)
+  if (buffer.includes(0)) throw new AuthError('INVALID_INPUT', '二进制文件不支持在线预览')
+  let content: string
+  try {
+    content = new TextDecoder('utf-8', { fatal: true }).decode(buffer)
+  } catch {
+    throw new AuthError('INVALID_INPUT', '文件不是有效的 UTF-8 文本')
+  }
+  return {
+    file: {
+      name,
+      path: projectRelativeSegments(relativePath).join('/'),
+      size: metadata.size,
+      updatedAt: metadata.mtimeMs,
+      format: extname(name).toLocaleLowerCase('en-US') === '.md' ? 'markdown' as const : 'text' as const,
+    },
+    content,
+  }
+}
+
+function attachmentHeader(name: string): string {
+  const fallback = name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_')
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(name)}`
+}
+
+async function sendProjectFileDownload(res: ServerResponse, root: string, relativePath: string): Promise<void> {
+  if (relativePath.length === 0) throw new AuthError('INVALID_INPUT', '请选择要下载的文件')
+  const target = await projectFileTarget(root, relativePath)
+  const metadata = await lstat(target)
+  if (!metadata.isFile()) throw new AuthError('INVALID_INPUT', '所选路径不是文件')
+  res.writeHead(200, {
+    'cache-control': 'no-store',
+    'content-type': 'application/octet-stream',
+    'content-length': metadata.size,
+    'content-disposition': attachmentHeader(basename(target)),
+    'x-content-type-options': 'nosniff',
+  })
+  try {
+    await pipeline(createReadStream(target), res)
+  } catch (error) {
+    /* v8 ignore next 2 -- only an external socket or filesystem failure after headers starts this teardown path. */
+    if (!res.destroyed) res.destroy(error instanceof Error ? error : undefined)
+  }
+}
+
 /** Register login, session, administration, and managed-project routes. */
 export function apply(ctx: Context, config: Config = {}): void {
   const cookieName = config.cookieName ?? DEFAULT_COOKIE_NAME
   const oidcCookieName = `${cookieName}_oidc`
   const secure = config.secureCookie ?? false
   const maxBodyBytes = config.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
+  const projectFileMaxEntries = config.projectFileMaxEntries ?? DEFAULT_PROJECT_FILE_MAX_ENTRIES
+  const projectFilePreviewMaxBytes = config.projectFilePreviewMaxBytes ?? DEFAULT_PROJECT_FILE_PREVIEW_MAX_BYTES
   const pendingOidcFlows = new Map<string, PendingOidcFlow>()
 
   ctx.connection.registerAuthenticator({
@@ -474,7 +647,8 @@ export function apply(ctx: Context, config: Config = {}): void {
     path: '/auth',
     handler: async (req, res) => {
       /* v8 ignore next -- node:http supplies url for every server request delivered to a route. */
-      const pathname = new URL(req.url ?? '/', 'http://x').pathname
+      const routeUrl = new URL(req.url ?? '/', 'http://x')
+      const pathname = routeUrl.pathname
       if (req.method !== 'GET' && !requestOriginAllowed(req)) {
         sendJson(res, 403, { error: { code: 'ORIGIN_REJECTED', message: '请求来源不受信任' } })
         return
@@ -659,6 +833,35 @@ export function apply(ctx: Context, config: Config = {}): void {
           return
         }
 
+        const projectFilesMatch = /^\/auth\/projects\/([^/]+)\/files(?:\/(preview|download))?$/.exec(pathname)
+        if (projectFilesMatch !== null && req.method === 'GET') {
+          const workspace = projectWorkspace(ctx, principal, decodeURIComponent(projectFilesMatch[1] as string))
+          const relativePath = routeUrl.searchParams.get('path') ?? ''
+          const operation = projectFilesMatch[2]
+          if (operation === 'preview') {
+            sendJson(res, 200, {
+              preview: await projectFilePreview(workspace.path, relativePath, projectFilePreviewMaxBytes),
+            })
+            return
+          }
+          if (operation === 'download') {
+            await sendProjectFileDownload(res, workspace.path, relativePath)
+            return
+          }
+          sendJson(res, 200, {
+            directory: {
+              path: projectRelativeSegments(relativePath).join('/'),
+              entries: await projectDirectoryEntries(
+                workspace.path,
+                relativePath,
+                projectFileMaxEntries,
+                projectFilePreviewMaxBytes,
+              ),
+            },
+          })
+          return
+        }
+
         if (pathname === '/auth/system/shared-deepseek' && req.method === 'PUT') {
           requireAdmin(principal)
           const body = await readJson(req, maxBodyBytes)
@@ -759,7 +962,7 @@ export function apply(ctx: Context, config: Config = {}): void {
               ...sharedDeepSeek,
               enabledUsers: users.filter(user => ctx.auth.sharedDeepSeekPreference(user.id).enabled).length,
             },
-            limits: { maxBodyBytes },
+            limits: { maxBodyBytes, projectFileMaxEntries, projectFilePreviewMaxBytes },
           })
           return
         }

@@ -9,7 +9,7 @@ kind: "package-library"
 
 ## 概述
 
-`dsh-client-web` 启动 web GUI：在多用户部署中，它会先探测持久浏览器会话，并在不创建客户端模块系统、不激活客户端插件且不打开 Remote 传输的情况下渲染登录页。Host 提供的 index 可能已经预载不可变 bundle 字节，但排队的 factory 在认证前不会运行。已认证外壳以私有项目、个人设置和角色限制的管理员页面包裹激活后的插件运行时。无框架启动页会逐 entry 报告状态，因此失败的 bundle 或插件保持可见，而不是白屏。本包还定义共享模块表（`PLATFORM_MODULES`），每个动态 bundle 都依据它解析 external。模型永远看不到本包。
+`dsh-client-web` 启动 web GUI：在多用户部署中，它会先探测持久浏览器会话，并在不创建客户端模块系统、不激活客户端插件且不打开 Remote 传输的情况下渲染登录页。Host 提供的 index 可能已经预载不可变 bundle 字节，但排队的 factory 在认证前不会运行。已认证外壳以私有项目、项目文件浏览与预览、个人设置和角色限制的管理员页面包裹激活后的插件运行时。无框架启动页会逐 entry 报告状态，因此失败的 bundle 或插件保持可见，而不是白屏。本包还定义共享模块表（`PLATFORM_MODULES`），每个动态 bundle 都依据它解析 external。模型永远看不到本包。
 
 ## 目录
 
@@ -26,6 +26,8 @@ kind: "package-library"
 ## 使用本包
 
 组装浏览器应用时使用它：`apps/web` 的 Vite 入口对挂载点运行 `new AppWebEntry(container).run()`。Host 注入 `__HARNESS_MULTI_USER__` 时，entry 会在创建模块前调用 `/auth/session`；匿名用户看到本地/OIDC 登录外壳，已认证用户则先激活插件图，再挂载 Harness portal。普通单用户组合仍保留直接进入启动页的流程。预注入的页面传输是 `seams` 覆盖之前的默认：当 `globalThis.__DSH_TRANSPORT__` 携带 `loadBundle` 时，模块阶段将其采纳为 bundle 传输并跳过 `immediately` 层级的 HTTP 预取，而显式 `seams` 仍然优先（例如外部 `<script>` 执行无法到达页面上下文的 jsdom 测试）。
+
+每个受管项目行会把进入运行时与“文件”操作分开。“文件”会打开同源对话框，提供目录导航、大小受限的文本或 Markdown 预览及附件下载；所有权、隐藏条目、符号链接和路径校验仍以 Host 为授权真源。
 
 外壳基础样式会在支持的浏览器中为普通内容自动添加中西文间距。语义化代码以及终端、diff、读取和搜索输出容器会保留源码中的原始间距和列对齐；不支持 `text-autospace` 的浏览器会忽略这两项声明。
 

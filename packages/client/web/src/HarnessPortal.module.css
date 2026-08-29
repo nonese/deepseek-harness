@@ -721,15 +721,13 @@
   width: 100%;
   min-height: 82px;
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) 120px 80px;
+  grid-template-columns: minmax(0, 1fr) 120px 72px 80px;
   align-items: center;
   gap: 14px;
-  padding: 14px 18px;
-  border: 0;
+  padding: 0 18px;
   border-bottom: 1px solid var(--dsw-alias-border-l1);
   background: var(--dsw-alias-bg-base);
   color: inherit;
-  cursor: pointer;
   text-align: left;
 }
 
@@ -737,8 +735,25 @@
   border-bottom: 0;
 }
 
-.projectRow:hover {
+.projectRow:has(.projectOpen:hover),
+.projectRow:has(.projectOpen:focus-visible) {
   background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.projectOpen {
+  align-self: stretch;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  padding: 14px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
 }
 
 .projectMark {
@@ -774,14 +789,30 @@
   font-size: 14px;
 }
 
+.fileText,
 .openText {
+  height: 34px;
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
   color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  font: inherit;
   font-size: 14px;
   text-align: right;
+}
+
+.fileText:hover,
+.fileText:focus-visible,
+.openText:hover,
+.openText:focus-visible {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
 }
 
 .empty {
@@ -1077,7 +1108,14 @@
   }
 
   .projectRow {
-    grid-template-columns: 38px minmax(0, 1fr) 48px;
+    grid-template-columns: minmax(0, 1fr) 62px 54px;
+    gap: 6px;
+    padding: 0 12px;
+  }
+
+  .projectOpen {
+    grid-template-columns: 38px minmax(0, 1fr);
+    gap: 10px;
   }
 }
 

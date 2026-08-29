@@ -1,5 +1,5 @@
 ---
-description: "Same-origin local and OIDC login, browser-session authorization, administrator controls, per-user project creation, and managed-model preferences for the Harness Web server."
+description: "Same-origin local and OIDC login, browser-session authorization, administrator controls, per-user project creation and file access, and managed-model preferences for the Harness Web server."
 kind: "package-reference"
 ---
 
@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Use this package to turn the Harness Web composition into a login-gated, single-process multi-user server. It provides local and OIDC login routes, durable browser-session authorization, administrator controls, per-user project creation, and the user's opt-in to an administrator-managed DeepSeek credential. Ordinary users receive only their own sessions, workspaces, projects, and event streams; administrator namespaces and dynamic Cordis mutation remain administrator-only.
+Use this package to turn the Harness Web composition into a login-gated, single-process multi-user server. It provides local and OIDC login routes, durable browser-session authorization, administrator controls, per-user project creation and file access, and the user's opt-in to an administrator-managed DeepSeek credential. Ordinary users receive only their own sessions, workspaces, projects, and event streams; administrator namespaces and dynamic Cordis mutation remain administrator-only.
 
 ## Table of Contents
 
@@ -27,7 +27,9 @@ Use this package to turn the Harness Web composition into a login-gated, single-
 
 ### Routes
 
-`GET /auth/session`, `POST /auth/login/local`, `GET /auth/oidc/start`, `GET /auth/oidc/callback`, and `POST /auth/logout` own the browser session lifecycle. OIDC uses Authorization Code with PKCE S256, state, nonce, provider discovery, and signed ID Token validation through the provider's rotating JWKS. A pending flow is process-memory state with a ten-minute lifetime and a matching `HttpOnly`, `SameSite=Lax` transient cookie; callback replay cannot issue another session. Authenticated users may list and create projects below their own generated data root. `GET` and `PATCH /auth/preferences` expose and change only the current user's shared-DeepSeek opt-in; enabling fails while the administrator credential is absent.
+`GET /auth/session`, `POST /auth/login/local`, `GET /auth/oidc/start`, `GET /auth/oidc/callback`, and `POST /auth/logout` own the browser session lifecycle. OIDC uses Authorization Code with PKCE S256, state, nonce, provider discovery, and signed ID Token validation through the provider's rotating JWKS. A pending flow is process-memory state with a ten-minute lifetime and a matching `HttpOnly`, `SameSite=Lax` transient cookie; callback replay cannot issue another session. Authenticated users may list and create projects below their own generated data root. `GET /auth/projects/:id/files` lists one project-relative directory, `/preview` returns bounded UTF-8 text, and `/download` streams one regular file as an attachment. Each file route resolves the id only among the authenticated user's managed workspaces, rejects traversal and symbolic links, and omits hidden entries. `GET` and `PATCH /auth/preferences` expose and change only the current user's shared-DeepSeek opt-in; enabling fails while the administrator credential is absent.
+
+`projectFileMaxEntries` bounds one directory response and defaults to 1,000 visible entries. `projectFilePreviewMaxBytes` bounds one text preview and defaults to 512 KiB; downloads remain streamed instead of being buffered into application memory.
 
 Administrators may read the effective process, storage, authentication, isolation, request-limit, and shared-model status; list user metadata; create local users; change role or status; and reset a local password. `PUT /auth/system/oidc` saves issuer, client id, redirect URI, scopes, client authentication method, the optional intranet-HTTP exception, and the first-login administrator group. The submitted client secret is written under `HARNESS_OIDC_CLIENT_SECRET` in the existing credentials provider and never returned. `POST /auth/system/oidc/test` validates the saved discovery document without issuing tokens. `PUT` and `DELETE /auth/system/shared-deepseek` replace or remove the dedicated managed model credential. Administration responses expose configured and writable state but never return submitted or stored secrets or user project and session content.
 

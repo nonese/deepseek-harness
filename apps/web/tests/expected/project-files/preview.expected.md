@@ -1,0 +1,43 @@
+- 'dialog "Project files: Alpha workspace"':
+  - banner:
+    - img
+    - heading "Project files" [level=2]
+    - paragraph: Alpha workspace
+    - button "Close project files":
+      - img
+  - navigation "Project file path":
+    - button "Alpha workspace":
+      - img
+      - text: Alpha workspace
+  - region "File list":
+    - button "src":
+      - img
+      - text: src
+    - text: — 8/29, {{clock}} PM
+    - link "archive.bin":
+      - /url: /auth/{{workspace}}/{{uuid}}/files/download?path=archive.bin
+      - img
+      - text: archive.bin
+    - text: 3 B 8/29, {{clock}} PM
+    - link "Download archive.bin":
+      - /url: /auth/{{workspace}}/{{uuid}}/files/download?path=archive.bin
+      - img
+    - button "README.md" [pressed]:
+      - img
+      - text: README.md
+    - text: 40 B 8/29, {{clock}} PM
+    - link "Download README.md":
+      - /url: /auth/{{workspace}}/{{uuid}}/files/download?path=README.md
+      - img
+  - region "File preview":
+    - text: File preview
+    - strong: README.md
+    - link "Download file":
+      - /url: /auth/{{workspace}}/{{uuid}}/files/download?path=README.md
+      - img
+      - text: Download file
+    - heading "Alpha guide" [level=1]
+    - paragraph: Private managed content.
+  - contentinfo:
+    - img
+    - text: Only files in this project are available Hidden files and symbolic links are not shown

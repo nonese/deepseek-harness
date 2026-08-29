@@ -1,13 +1,18 @@
 /** Browser acceptance for server-managed per-user projects. */
 
-import { realpath, stat } from 'node:fs/promises'
-import { isAbsolute, relative } from 'node:path'
+import { mkdir, realpath, stat, writeFile } from 'node:fs/promises'
+import { isAbsolute, join, relative } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
 import {
+  assertFixtureInventory,
+  captureStableAria,
+  compareOrRefreshGolden,
   launchWebScaffold,
   watchConsole,
+  webSnapshotMode,
   type WebScaffold,
 } from './scaffold.ts'
 import { newEnglishPage, saveFailureShot } from './support.ts'
@@ -18,6 +23,11 @@ interface ProjectView {
   path: string
   sessionCount: number
 }
+
+const MODE = webSnapshotMode()
+const EXPECTED_DIR = fileURLToPath(new URL('./expected/project-files/', import.meta.url))
+const LIST_EXPECTED = fileURLToPath(new URL('./expected/project-files/list.expected.md', import.meta.url))
+const PREVIEW_EXPECTED = fileURLToPath(new URL('./expected/project-files/preview.expected.md', import.meta.url))
 
 describe('web e2e: server-managed project lifecycle', () => {
   let scaffold: WebScaffold
@@ -82,8 +92,45 @@ describe('web e2e: server-managed project lifecycle', () => {
     await page.keyboard.press('Escape')
   })
 
-  it('stays free of browser errors and model calls', () => {
+  it('browses and previews files from the selected managed project', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-managed-project-files'))
+    await page.getByRole('button', { name: 'Back to my projects', exact: true }).click()
+    const response = await scaffold.hostFetch('/auth/projects')
+    const body = await response.json() as { projects: ProjectView[] }
+    const project = body.projects.find(candidate => candidate.name === 'Alpha workspace')
+    if (project === undefined) throw new Error('Alpha workspace is missing')
+    await mkdir(join(project.path, 'src'))
+    await writeFile(join(project.path, 'README.md'), '# Alpha guide\n\nPrivate managed content.\n')
+    await writeFile(join(project.path, 'src', 'main.ts'), 'export const alpha = true\n')
+    await writeFile(join(project.path, 'archive.bin'), Buffer.from([1, 2, 3]))
+
+    const row = page.locator('[class*="projectRow"]').filter({ hasText: 'Alpha workspace' })
+    await row.getByRole('button', { name: 'Files', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: 'Project files: Alpha workspace', exact: true })
+    await dialog.waitFor({ timeout: 10_000 })
+    await dialog.getByText('README.md', { exact: true }).waitFor()
+    await compareOrRefreshGolden(
+      LIST_EXPECTED,
+      await captureStableAria(page, '[role="dialog"]', scaffold.workspaceCwd),
+      MODE,
+    )
+
+    await dialog.getByRole('button', { name: 'README.md', exact: true }).click()
+    await dialog.getByRole('heading', { name: 'Alpha guide', exact: true }).waitFor()
+    expect(await dialog.getByText('Private managed content.', { exact: true }).isVisible()).toBe(true)
+    expect(await dialog.getByRole('link', { name: 'Download README.md', exact: true }).getAttribute('href'))
+      .toContain('/files/download?path=README.md')
+    await compareOrRefreshGolden(
+      PREVIEW_EXPECTED,
+      await captureStableAria(page, '[role="dialog"]', scaffold.workspaceCwd),
+      MODE,
+    )
+    await dialog.getByRole('button', { name: 'Close project files', exact: true }).click()
+  })
+
+  it('stays free of browser errors and model calls', async () => {
     expect(tripwire.pageErrors).toEqual([])
     expect(tripwire.warnings).toEqual([])
+    await assertFixtureInventory(EXPECTED_DIR, ['list.expected.md', 'preview.expected.md'])
   })
 })
