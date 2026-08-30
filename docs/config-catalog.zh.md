@@ -928,7 +928,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-host-auth-web`
 
-需要：`auth` · `connection` · `credentials` · `settings` · `sessionController` · `sessions` · `typertGateway` · `webServer` · `workspaceRegistry`
+需要：`auth` · `connection` · `credentials` · `llm` · `settings` · `sessionController` · `sessions` · `typertGateway` · `webServer` · `workspaceRegistry`
 
 ```ts config-catalog
 /** Browser authentication route configuration. */
@@ -950,7 +950,7 @@ export interface Config {
 }
 ```
 
-来源：[`packages/host/auth-web/src/index.ts:65`](../packages/host/auth-web/src/index.ts)
+来源：[`packages/host/auth-web/src/index.ts:66`](../packages/host/auth-web/src/index.ts)
 
 <a id="deepseek-aidsh-host-directory-picker-browse"></a>
 

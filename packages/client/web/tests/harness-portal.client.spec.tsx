@@ -71,6 +71,19 @@ describe('HarnessPortal administrator navigation', () => {
           },
         })
       }
+      if (path === '/auth/system/managed-models/discover') {
+        expect(init?.method).toBe('POST')
+        expect(JSON.parse(init?.body as string)).toEqual({
+          baseURL: 'https://new-api.example.test/v1',
+          apiKey: 'sk-custom-browser-secret',
+        })
+        return jsonResponse({
+          models: [
+            { id: 'deepseek-chat', name: 'DeepSeek Chat' },
+            { id: 'gpt-4.1-mini', name: 'gpt-4.1-mini' },
+          ],
+        })
+      }
       if (path === '/auth/system/managed-models/sites') {
         expect(init?.method).toBe('POST')
         expect(JSON.parse(init?.body as string)).toEqual({
@@ -171,6 +184,8 @@ describe('HarnessPortal administrator navigation', () => {
     expect(getByText('统一模型 API')).toBeTruthy()
     expect(getByText('企业 OIDC 登录')).toBeTruthy()
     expect(getByText('DeepSeek-V4-Flash')).toBeTruthy()
+    expect(getByText('可用站点').parentElement?.querySelector('strong')?.textContent).toBe('0')
+    expect(getByText('自定义站点').parentElement?.querySelector('strong')?.textContent).toBe('0')
     expect(renderRuntime).not.toHaveBeenCalled()
     expect(fetchMock).toHaveBeenCalledWith('/auth/system', expect.anything())
 
@@ -179,15 +194,24 @@ describe('HarnessPortal administrator navigation', () => {
     await waitFor(() => {
       expect(getByText('DeepSeek 官方站点 API Key 已保存。用户需要在“设置”中主动启用后才能使用。')).toBeTruthy()
     })
+    expect(getByText('可用站点').parentElement?.querySelector('strong')?.textContent).toBe('1')
     expect(getByLabelText('替换 API Key')).toHaveProperty('value', '')
+    await waitFor(() => { expect(getByPlaceholderText('例如：校内 New API')).toHaveProperty('disabled', false) })
 
     fireEvent.change(getByPlaceholderText('例如：校内 New API'), { target: { value: '校内 New API' } })
     fireEvent.change(getByPlaceholderText('例如：https://new-api.example.com/v1'), { target: { value: 'https://new-api.example.test/v1' } })
-    fireEvent.change(getByPlaceholderText('每行一个，例如：deepseek-chat'), { target: { value: 'deepseek-chat\ngpt-4.1-mini' } })
     fireEvent.change(getByPlaceholderText('输入该站点的 API Key'), { target: { value: 'sk-custom-browser-secret' } })
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([input]) => input === '/auth/system/managed-models/discover')).toBe(true)
+    }, { timeout: 2_000 })
+    await waitFor(() => { expect(getByRole('checkbox', { name: /DeepSeek Chat/ })).toBeTruthy() }, { timeout: 2_000 })
+    fireEvent.click(getByRole('checkbox', { name: /DeepSeek Chat/ }))
+    fireEvent.click(getByRole('checkbox', { name: 'gpt-4.1-mini' }))
     fireEvent.click(getByRole('button', { name: '添加站点' }))
     await waitFor(() => { expect(getByText('自定义统一模型站点已添加。')).toBeTruthy() })
     expect(getByText('校内 New API')).toBeTruthy()
+    expect(getByText('可用站点').parentElement?.querySelector('strong')?.textContent).toBe('2')
+    expect(getByText('自定义站点').parentElement?.querySelector('strong')?.textContent).toBe('1')
 
     fireEvent.change(getByLabelText('Issuer URL'), { target: { value: 'http://identity.internal/api/oidc' } })
     fireEvent.change(getByLabelText('Client ID'), { target: { value: 'harness-browser-test' } })

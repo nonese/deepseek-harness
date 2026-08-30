@@ -191,6 +191,7 @@ interface BootResult {
   readonly authenticator: ConnectionRequestAuthenticator
   readonly sessions: Array<{ header: { cwd?: string; createdAt: number } }>
   readonly workspaces: Array<Record<string, unknown>>
+  readonly modelDiscoveryRequests: Array<{ settingsNs: string; request: Record<string, unknown> }>
 }
 
 async function boot(options: BootOptions = {}): Promise<BootResult> {
@@ -225,6 +226,7 @@ async function boot(options: BootOptions = {}): Promise<BootResult> {
   const workspaces: Array<Record<string, unknown>> = []
   const sessions: Array<{ header: { cwd?: string; createdAt: number } }> = []
   const modelSettings: { providers: Record<string, unknown> } = { providers: {} }
+  const modelDiscoveryRequests: Array<{ settingsNs: string; request: Record<string, unknown> }> = []
   let authenticator: ConnectionRequestAuthenticator | undefined
   const testDeps = {
     name: 'auth-web-test-deps',
@@ -234,6 +236,15 @@ async function boot(options: BootOptions = {}): Promise<BootResult> {
         registerAuthenticator: (value: ConnectionRequestAuthenticator) => {
           authenticator = value
           return () => Promise.resolve()
+        },
+      } as never)
+      context.provide('llm', {
+        async discoverModels(settingsNs: string, request: Record<string, unknown>) {
+          modelDiscoveryRequests.push({ settingsNs, request: structuredClone(request) })
+          return [
+            { id: 'deepseek-chat', name: 'DeepSeek Chat' },
+            { id: 'gpt-4.1-mini' },
+          ]
         },
       } as never)
       context.provide('sessionController', { inspect: vi.fn() } as never)
@@ -299,6 +310,7 @@ async function boot(options: BootOptions = {}): Promise<BootResult> {
     authenticator,
     sessions,
     workspaces,
+    modelDiscoveryRequests,
   }
 }
 
@@ -368,7 +380,7 @@ async function putChunked(
 
 describe('real authentication route composition', () => {
   it('keeps the plugin graph behind local login and exposes admin metadata only after authentication', { timeout: 60_000 }, async () => {
-    const { context, origin } = await boot()
+    const { context, origin, modelDiscoveryRequests } = await boot()
     const unloaded = [...context.loader.entries()]
       .filter(entry => entry.fiber === undefined && !entry.disabled)
       .map(entry => entry.options.name)
@@ -495,6 +507,13 @@ describe('real authentication route composition', () => {
     })
     expect(memberWrite.status).toBe(403)
 
+    const memberDiscovery = await fetch(`${origin}/auth/system/managed-models/discover`, {
+      method: 'POST',
+      headers: { cookie: memberCookie as string, origin, 'content-type': 'application/json' },
+      body: JSON.stringify({ baseURL: 'https://new-api.example.test/v1', apiKey: 'sk-member-probe' }),
+    })
+    expect(memberDiscovery.status).toBe(403)
+
     const enabled = await fetch(`${origin}/auth/preferences`, {
       method: 'PATCH',
       headers: { cookie: memberCookie as string, origin, 'content-type': 'application/json' },
@@ -505,6 +524,34 @@ describe('real authentication route composition', () => {
     expect(await updatedSystem.json()).toMatchObject({ managedModels: { configured: true, enabledUsers: 1 } })
 
     const customKey = 'sk-custom-secret-that-must-not-return'
+    const missingDiscoveryKey = await fetch(`${origin}/auth/system/managed-models/discover`, {
+      method: 'POST',
+      headers: { cookie: cookie as string, origin, 'content-type': 'application/json' },
+      body: JSON.stringify({ baseURL: 'https://new-api.example.test/v1/' }),
+    })
+    expect(missingDiscoveryKey.status).toBe(400)
+    const discovery = await fetch(`${origin}/auth/system/managed-models/discover`, {
+      method: 'POST',
+      headers: { cookie: cookie as string, origin, 'content-type': 'application/json' },
+      body: JSON.stringify({ baseURL: 'https://new-api.example.test/v1/', apiKey: customKey }),
+    })
+    expect(discovery.status).toBe(200)
+    const discoveryBody = await discovery.json() as { models: Array<{ id: string; name: string }> }
+    expect(discoveryBody).toEqual({
+      models: [
+        { id: 'deepseek-chat', name: 'DeepSeek Chat' },
+        { id: 'gpt-4.1-mini', name: 'gpt-4.1-mini' },
+      ],
+    })
+    expect(JSON.stringify(discoveryBody)).not.toContain(customKey)
+    expect(modelDiscoveryRequests).toEqual([{
+      settingsNs: 'llm-pi-ai',
+      request: {
+        baseURL: 'https://new-api.example.test/v1',
+        api: 'openai-completions',
+        apiKey: customKey,
+      },
+    }])
     const custom = await fetch(`${origin}/auth/system/managed-models/sites`, {
       method: 'POST',
       headers: { cookie: cookie as string, origin, 'content-type': 'application/json' },
@@ -532,6 +579,24 @@ describe('real authentication route composition', () => {
             configured: true,
           },
         ],
+      },
+    })
+
+    const existingDiscovery = await fetch(`${origin}/auth/system/managed-models/discover`, {
+      method: 'POST',
+      headers: { cookie: cookie as string, origin, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        siteId: customSite?.id,
+        baseURL: 'https://new-api.example.test/v1',
+      }),
+    })
+    expect(existingDiscovery.status).toBe(200)
+    expect(modelDiscoveryRequests.at(-1)).toEqual({
+      settingsNs: 'llm-pi-ai',
+      request: {
+        provider: `managed-${String(customSite?.id)}`,
+        baseURL: 'https://new-api.example.test/v1',
+        api: 'openai-completions',
       },
     })
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import {
   IconChevronRightOutline14,
   IconFolderClose16,
@@ -492,25 +492,91 @@ function formatBytes(bytes: number, t: WebTranslate): string {
 interface ManagedSiteDraft {
   name: string
   baseURL: string
-  models: string
+  models: string[]
   apiKey: string
 }
 
 function emptyManagedSiteDraft(): ManagedSiteDraft {
-  return { name: '', baseURL: '', models: '', apiKey: '' }
+  return { name: '', baseURL: '', models: [], apiKey: '' }
 }
 
 function managedSiteDraft(site: ManagedModelSiteStatus, apiKey = ''): ManagedSiteDraft {
   return {
     name: site.name,
     baseURL: site.baseURL,
-    models: site.models.map(model => model.id).join('\n'),
+    models: site.models.map(model => model.id),
     apiKey,
   }
 }
 
-function managedSiteModels(value: string): string[] {
-  return value.split(/[\s,]+/u).map(model => model.trim()).filter(Boolean)
+function managedSiteDiscoveryReady(draft: ManagedSiteDraft, storedKeyAvailable: boolean): boolean {
+  if (!storedKeyAvailable && draft.apiKey.trim().length === 0) return false
+  try {
+    const url = new URL(draft.baseURL)
+    return (url.protocol === 'http:' || url.protocol === 'https:') && url.host.length > 0
+  } catch {
+    return false
+  }
+}
+
+interface ManagedModelPickerProps {
+  disabled: boolean
+  discovering: boolean
+  models: readonly { id: string; name: string }[]
+  selected: readonly string[]
+  t: WebTranslate
+  onDiscover: () => void
+  onSelected: (models: string[]) => void
+}
+
+function ManagedModelPicker({
+  disabled,
+  discovering,
+  models,
+  selected,
+  t,
+  onDiscover,
+  onSelected,
+}: ManagedModelPickerProps) {
+  const selectedSet = new Set(selected)
+  return (
+    <fieldset className={css.managedModelPicker} disabled={disabled || discovering}>
+      <legend>{t('shared.modelIds')}</legend>
+      <div className={css.managedModelPickerToolbar}>
+        <span>{t('shared.selectedModels', { count: selected.length })}</span>
+        <div>
+          <button type="button" onClick={onDiscover}>{discovering ? t('shared.loadingModels') : t('shared.loadModels')}</button>
+          <button type="button" disabled={models.length === 0} onClick={() => { onSelected(models.slice(0, 32).map(model => model.id)) }}>{t('shared.selectAllModels')}</button>
+          <button type="button" disabled={selected.length === 0} onClick={() => { onSelected([]) }}>{t('shared.clearModels')}</button>
+        </div>
+      </div>
+      {models.length === 0
+        ? <p className={css.managedModelPickerEmpty}>{t('shared.modelDiscoveryHelp')}</p>
+        : (
+          <div className={css.managedModelOptions}>
+            {models.map((model) => {
+              const checked = selectedSet.has(model.id)
+              return (
+                <label key={model.id}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    disabled={!checked && selected.length >= 32}
+                    onChange={(event) => {
+                      onSelected(event.target.checked
+                        ? [...selected, model.id]
+                        : selected.filter(id => id !== model.id))
+                    }}
+                  />
+                  <span>{model.name}</span>
+                  {model.name !== model.id && <code>{model.id}</code>}
+                </label>
+              )
+            })}
+          </div>
+        )}
+    </fieldset>
+  )
 }
 
 function SystemSettingsView({ t }: { t: WebTranslate }) {
@@ -518,6 +584,10 @@ function SystemSettingsView({ t }: { t: WebTranslate }) {
   const [apiKey, setApiKey] = useState('')
   const [newSite, setNewSite] = useState<ManagedSiteDraft>(emptyManagedSiteDraft)
   const [siteDrafts, setSiteDrafts] = useState<Record<string, ManagedSiteDraft>>({})
+  const [modelOptions, setModelOptions] = useState<Record<string, readonly { id: string; name: string }[]>>({})
+  const [discoveringSite, setDiscoveringSite] = useState<string>()
+  const discoveryGeneration = useRef<Record<string, number>>({})
+  const automaticDiscovery = useRef<Record<string, string>>({})
   const [oidcDraft, setOidcDraft] = useState<OidcDraft>(defaultOidcDraft)
   const [oidcSecret, setOidcSecret] = useState('')
   const [oidcTest, setOidcTest] = useState<OidcTestResult>()
@@ -538,6 +608,9 @@ function SystemSettingsView({ t }: { t: WebTranslate }) {
       setSiteDrafts(Object.fromEntries(response.managedModels.sites
         .filter(site => site.kind === 'openai-compatible')
         .map(site => [site.id, managedSiteDraft(site)])))
+      setModelOptions(Object.fromEntries(response.managedModels.sites
+        .filter(site => site.kind === 'openai-compatible')
+        .map(site => [site.id, site.models])))
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
     } finally {
@@ -554,7 +627,72 @@ function SystemSettingsView({ t }: { t: WebTranslate }) {
     setSiteDrafts(current => Object.fromEntries(managedModels.sites
       .filter(site => site.kind === 'openai-compatible')
       .map(site => [site.id, managedSiteDraft(site, current[site.id]?.apiKey ?? '')])))
+    setModelOptions(current => Object.fromEntries(managedModels.sites
+      .filter(site => site.kind === 'openai-compatible')
+      .map(site => [site.id, current[site.id] ?? site.models])))
   }
+
+  const discoverManagedSite = useCallback(async (
+    key: string,
+    draft: ManagedSiteDraft,
+    siteId?: string,
+    force = false,
+  ): Promise<void> => {
+    if (!managedSiteDiscoveryReady(draft, siteId !== undefined)) return
+    const signature = `${draft.baseURL}\u0000${draft.apiKey}`
+    if (!force && automaticDiscovery.current[key] === signature) return
+    automaticDiscovery.current[key] = signature
+    const generation = (discoveryGeneration.current[key] ?? 0) + 1
+    discoveryGeneration.current[key] = generation
+    setDiscoveringSite(key)
+    setError(undefined)
+    setNotice(undefined)
+    try {
+      const response = await jsonRequest<{ models: { id: string; name: string }[] }>('/auth/system/managed-models/discover', {
+        method: 'POST',
+        body: JSON.stringify({
+          baseURL: draft.baseURL,
+          ...siteId === undefined ? {} : { siteId },
+          ...draft.apiKey.trim().length === 0 ? {} : { apiKey: draft.apiKey },
+        }),
+      })
+      if (discoveryGeneration.current[key] !== generation) return
+      const available = new Set(response.models.map(model => model.id))
+      setModelOptions(current => ({ ...current, [key]: response.models }))
+      if (siteId === undefined) {
+        setNewSite(current => ({ ...current, models: current.models.filter(model => available.has(model)) }))
+      } else {
+        setSiteDrafts((current) => {
+          const live = current[siteId]
+          return live === undefined
+            ? current
+            : { ...current, [siteId]: { ...live, models: live.models.filter(model => available.has(model)) } }
+        })
+      }
+      setNotice(t('shared.modelsLoadedNotice', { count: response.models.length }))
+    } catch (reason) {
+      if (discoveryGeneration.current[key] !== generation) return
+      setError(reason instanceof Error ? reason.message : String(reason))
+    } finally {
+      if (discoveryGeneration.current[key] === generation) {
+        setDiscoveringSite(current => current === key ? undefined : current)
+      }
+    }
+  }, [t])
+
+  useEffect(() => {
+    discoveryGeneration.current.new = (discoveryGeneration.current.new ?? 0) + 1
+    setDiscoveringSite(current => current === 'new' ? undefined : current)
+    if (!managedSiteDiscoveryReady(newSite, false)) {
+      Reflect.deleteProperty(automaticDiscovery.current, 'new')
+      setModelOptions(current => current.new === undefined ? current : { ...current, new: [] })
+      return
+    }
+    const timeout = window.setTimeout(() => {
+      void discoverManagedSite('new', newSite)
+    }, 700)
+    return () => { window.clearTimeout(timeout) }
+  }, [discoverManagedSite, newSite.apiKey, newSite.baseURL])
 
   const saveSharedCredential = (event: FormEvent): void => {
     event.preventDefault()
@@ -591,18 +729,18 @@ function SystemSettingsView({ t }: { t: WebTranslate }) {
 
   const createManagedSite = (event: FormEvent): void => {
     event.preventDefault()
-    const models = managedSiteModels(newSite.models)
     if (newSite.name.trim().length === 0 || newSite.baseURL.trim().length === 0
-      || models.length === 0 || newSite.apiKey.trim().length === 0) return
+      || newSite.models.length === 0 || newSite.apiKey.trim().length === 0) return
     setSaving(true)
     setError(undefined)
     setNotice(undefined)
     void jsonRequest<{ managedModels: ManagedModelsStatus }>('/auth/system/managed-models/sites', {
       method: 'POST',
-      body: JSON.stringify({ ...newSite, models }),
+      body: JSON.stringify(newSite),
     }).then(({ managedModels }) => {
       updateManagedStatus(managedModels)
       setNewSite(emptyManagedSiteDraft())
+      setModelOptions(current => ({ ...current, new: [] }))
       setNotice(t('shared.siteAddedNotice'))
     }).catch((reason: unknown) => {
       setError(reason instanceof Error ? reason.message : String(reason))
@@ -612,8 +750,7 @@ function SystemSettingsView({ t }: { t: WebTranslate }) {
   const saveManagedSite = (id: string): void => {
     const draft = siteDrafts[id]
     if (draft === undefined) return
-    const models = managedSiteModels(draft.models)
-    if (draft.name.trim().length === 0 || draft.baseURL.trim().length === 0 || models.length === 0) return
+    if (draft.name.trim().length === 0 || draft.baseURL.trim().length === 0 || draft.models.length === 0) return
     setSaving(true)
     setError(undefined)
     setNotice(undefined)
@@ -622,7 +759,7 @@ function SystemSettingsView({ t }: { t: WebTranslate }) {
       body: JSON.stringify({
         name: draft.name,
         baseURL: draft.baseURL,
-        models,
+        models: draft.models,
         ...draft.apiKey.trim().length === 0 ? {} : { apiKey: draft.apiKey },
       }),
     }).then(({ managedModels }) => {
@@ -719,9 +856,9 @@ function SystemSettingsView({ t }: { t: WebTranslate }) {
               </span>
             </div>
             <div className={css.managedOverview}>
-              <div><span>{t('shared.siteCount')}</span><strong>{settings.managedModels.sites.length}</strong></div>
+              <div><span>{t('shared.siteCount')}</span><strong>{settings.managedModels.sites.filter(site => site.configured).length}</strong></div>
               <div><span>{t('shared.enabledUsers')}</span><strong>{settings.managedModels.enabledUsers}</strong></div>
-              <div><span>{t('shared.configuredSites')}</span><strong>{settings.managedModels.sites.filter(site => site.configured).length}</strong></div>
+              <div><span>{t('shared.configuredSites')}</span><strong>{customSites.length}</strong></div>
             </div>
 
             {officialSite !== undefined && (
@@ -784,26 +921,51 @@ function SystemSettingsView({ t }: { t: WebTranslate }) {
                       </label>
                       <label>
                         <span>{t('shared.baseUrl')}</span>
-                        <input type="url" aria-label={`${t('shared.baseUrl')} ${site.name}`} value={draft.baseURL} disabled={saving} onChange={(event) => {
-                          setSiteDrafts({ ...siteDrafts, [site.id]: { ...draft, baseURL: event.target.value } })
-                        }} />
-                      </label>
-                      <label>
-                        <span>{t('shared.modelIds')}</span>
-                        <textarea aria-label={`${t('shared.modelIds')} ${site.name}`} value={draft.models} disabled={saving} onChange={(event) => {
-                          setSiteDrafts({ ...siteDrafts, [site.id]: { ...draft, models: event.target.value } })
-                        }} />
+                        <input
+                          type="url"
+                          aria-label={`${t('shared.baseUrl')} ${site.name}`}
+                          value={draft.baseURL}
+                          disabled={saving}
+                          onChange={(event) => {
+                            discoveryGeneration.current[site.id] = (discoveryGeneration.current[site.id] ?? 0) + 1
+                            setDiscoveringSite(current => current === site.id ? undefined : current)
+                            setSiteDrafts({ ...siteDrafts, [site.id]: { ...draft, baseURL: event.target.value, models: [] } })
+                            setModelOptions({ ...modelOptions, [site.id]: [] })
+                          }}
+                          onBlur={() => { void discoverManagedSite(site.id, draft, site.id) }}
+                        />
                       </label>
                       <label>
                         <span>{t('shared.replaceApiKey')}</span>
-                        <input type="password" autoComplete="off" aria-label={`${t('shared.replaceApiKey')} ${site.name}`} value={draft.apiKey} disabled={saving} placeholder={t('shared.keepKeyPlaceholder')} onChange={(event) => {
-                          setSiteDrafts({ ...siteDrafts, [site.id]: { ...draft, apiKey: event.target.value } })
-                        }} />
+                        <input
+                          type="password"
+                          autoComplete="off"
+                          aria-label={`${t('shared.replaceApiKey')} ${site.name}`}
+                          value={draft.apiKey}
+                          disabled={saving}
+                          placeholder={t('shared.keepKeyPlaceholder')}
+                          onChange={(event) => {
+                            discoveryGeneration.current[site.id] = (discoveryGeneration.current[site.id] ?? 0) + 1
+                            setDiscoveringSite(current => current === site.id ? undefined : current)
+                            setSiteDrafts({ ...siteDrafts, [site.id]: { ...draft, apiKey: event.target.value, models: [] } })
+                            setModelOptions({ ...modelOptions, [site.id]: [] })
+                          }}
+                          onBlur={() => { void discoverManagedSite(site.id, draft, site.id) }}
+                        />
                       </label>
                     </div>
+                    <ManagedModelPicker
+                      disabled={saving || !managedSiteDiscoveryReady(draft, true)}
+                      discovering={discoveringSite === site.id}
+                      models={modelOptions[site.id] ?? site.models}
+                      selected={draft.models}
+                      t={t}
+                      onDiscover={() => { void discoverManagedSite(site.id, draft, site.id, true) }}
+                      onSelected={(models) => { setSiteDrafts({ ...siteDrafts, [site.id]: { ...draft, models } }) }}
+                    />
                     <div className={css.managedSiteActions}>
                       <button className={css.dangerButton} type="button" disabled={saving} onClick={() => { removeManagedSite(site.id) }}>{t('shared.removeSite')}</button>
-                      <button className={css.primaryButton} type="button" disabled={saving || managedSiteModels(draft.models).length === 0} onClick={() => { saveManagedSite(site.id) }}>{t('shared.saveSite')}</button>
+                      <button className={css.primaryButton} type="button" disabled={saving || draft.models.length === 0} onClick={() => { saveManagedSite(site.id) }}>{t('shared.saveSite')}</button>
                     </div>
                   </article>
                 )
@@ -814,11 +976,19 @@ function SystemSettingsView({ t }: { t: WebTranslate }) {
               <div><h3>{t('shared.addSite')}</h3><p>{t('shared.addSiteHelp')}</p></div>
               <div className={css.managedSiteFormGrid}>
                 <label><span>{t('shared.siteName')}</span><input required value={newSite.name} disabled={saving} placeholder={t('shared.siteNamePlaceholder')} onChange={(event) => { setNewSite({ ...newSite, name: event.target.value }) }} /></label>
-                <label><span>{t('shared.baseUrl')}</span><input required type="url" value={newSite.baseURL} disabled={saving} placeholder={t('shared.baseUrlPlaceholder')} onChange={(event) => { setNewSite({ ...newSite, baseURL: event.target.value }) }} /></label>
-                <label><span>{t('shared.modelIds')}</span><textarea required value={newSite.models} disabled={saving} placeholder={t('shared.modelIdsPlaceholder')} onChange={(event) => { setNewSite({ ...newSite, models: event.target.value }) }} /></label>
-                <label><span>{t('shared.setApiKey')}</span><input required type="password" autoComplete="off" value={newSite.apiKey} disabled={saving} placeholder={t('shared.customKeyPlaceholder')} onChange={(event) => { setNewSite({ ...newSite, apiKey: event.target.value }) }} /></label>
+                <label><span>{t('shared.baseUrl')}</span><input required type="url" value={newSite.baseURL} disabled={saving} placeholder={t('shared.baseUrlPlaceholder')} onChange={(event) => { setNewSite({ ...newSite, baseURL: event.target.value, models: [] }); setModelOptions({ ...modelOptions, new: [] }) }} /></label>
+                <label><span>{t('shared.setApiKey')}</span><input required type="password" autoComplete="off" value={newSite.apiKey} disabled={saving} placeholder={t('shared.customKeyPlaceholder')} onChange={(event) => { setNewSite({ ...newSite, apiKey: event.target.value, models: [] }); setModelOptions({ ...modelOptions, new: [] }) }} /></label>
               </div>
-              <div className={css.managedSiteActions}><button className={css.primaryButton} type="submit" disabled={saving || managedSiteModels(newSite.models).length === 0}>{saving ? t('action.saving') : t('shared.addSiteAction')}</button></div>
+              <ManagedModelPicker
+                disabled={saving || !managedSiteDiscoveryReady(newSite, false)}
+                discovering={discoveringSite === 'new'}
+                models={modelOptions.new ?? []}
+                selected={newSite.models}
+                t={t}
+                onDiscover={() => { void discoverManagedSite('new', newSite, undefined, true) }}
+                onSelected={(models) => { setNewSite({ ...newSite, models }) }}
+              />
+              <div className={css.managedSiteActions}><button className={css.primaryButton} type="submit" disabled={saving || newSite.models.length === 0}>{saving ? t('action.saving') : t('shared.addSiteAction')}</button></div>
             </form>
           </section>
 

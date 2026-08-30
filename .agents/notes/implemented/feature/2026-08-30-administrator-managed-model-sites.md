@@ -10,7 +10,7 @@ The multi-user Web server offered one administrator credential for one fixed Dee
 
 ## Decision
 
-The system settings page keeps the fixed `deepseek-official/deepseek-v4-flash` site and lets an administrator add up to 32 custom OpenAI Chat Completions-compatible sites. Each custom site stores a display name, an HTTP or HTTPS Base URL without credentials, query, or fragment, and up to 32 explicit model ids. The Host assigns a random twelve-hexadecimal site id and reserves the corresponding `managed-<site id>` pi-ai provider route.
+The system settings page keeps the fixed `deepseek-official/deepseek-v4-flash` site and lets an administrator add up to 32 custom OpenAI Chat Completions-compatible sites. After the administrator enters an HTTP or HTTPS Base URL and API key, the Host uses pi-ai model discovery to request that site's `/models` endpoint and offers the returned models for selection. Each custom site stores a display name, a Base URL without credentials, query, or fragment, and up to 32 selected model ids. The Host assigns a random twelve-hexadecimal site id and reserves the corresponding `managed-<site id>` pi-ai provider route.
 
 Every site has its own server-side credential reference. The official site uses `HARNESS_SHARED_DEEPSEEK_API_KEY`; a custom site uses `HARNESS_SHARED_MODEL_<SITE ID>_API_KEY`. HTTP responses expose only whether a credential is configured and writable. Creating a custom site writes its credential before its profile and removes the credential if the settings provider refuses the profile. Removing a site removes both records.
 
@@ -20,7 +20,7 @@ The reserved route and credential grammar distinguishes this policy from ordinar
 
 ## Verification
 
-Host route tests cover official-site credential replacement, custom-site creation, update, deletion, input validation, administrator-only mutation, and non-disclosure of submitted keys. Gateway tests cover opted-out catalog removal and fallback selection. Pi-ai composition tests prove that a direct model request cannot consume a managed key until the project owner opts in, and client tests cover both administrator site entry and ordinary-user activation.
+Host route tests cover official-site credential replacement, custom-site discovery, creation, update, deletion, input validation, administrator-only mutation, and non-disclosure of submitted keys. Gateway tests cover opted-out catalog removal and fallback selection. Pi-ai composition tests prove that a direct model request cannot consume a managed key until the project owner opts in, and client tests cover automatic discovery, administrator model selection, and ordinary-user activation.
 
 ## Alternatives considered
 
@@ -32,4 +32,4 @@ Host route tests cover official-site credential replacement, custom-site creatio
 
 ## Consequences
 
-An administrator can expose the official DeepSeek model and several internal gateways from one process, and each ordinary user chooses whether those shared credentials apply to their projects. Keys remain centralized and independently rotatable. The design intentionally gives up arbitrary provider protocols, automatic model discovery, per-site user preferences, and user-authored shared routes: custom managed sites use OpenAI Chat Completions, list explicit models, share one user switch, and remain administrator-owned.
+An administrator can expose the official DeepSeek model and several internal gateways from one process, and each ordinary user chooses whether those shared credentials apply to their projects. Keys remain centralized and independently rotatable. The design intentionally gives up arbitrary provider protocols, manual model ids, per-site user preferences, and user-authored shared routes: custom managed sites use OpenAI Chat Completions, select models returned by `/models`, share one user switch, and remain administrator-owned.

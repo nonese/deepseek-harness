@@ -53,6 +53,7 @@ export const inject = [
   'auth',
   'connection',
   'credentials',
+  'llm',
   'settings',
   'sessionController',
   'sessions',
@@ -487,6 +488,24 @@ function managedSiteModels(values: string[]): string[] {
     }
   }
   return models
+}
+
+function managedSiteDiscoveryKey(body: JsonObject): string | undefined {
+  const apiKey = stringField(body, 'apiKey', false)
+  if (apiKey === undefined) return undefined
+  const checked = normalizeApiKey(apiKey)
+  if (!checked.ok) {
+    throw new AuthError(
+      'INVALID_INPUT',
+      checked.reason === 'empty' ? 'API Key 不能为空' : 'API Key 包含不支持的字符',
+    )
+  }
+  return checked.value
+}
+
+function managedSiteDiscoveryId(value: string): string {
+  if (!/^[a-f0-9]{12}$/u.test(value)) throw new AuthError('INVALID_INPUT', '统一模型站点不存在')
+  return value
 }
 
 function managedSiteProfile(
@@ -1067,6 +1086,35 @@ export function apply(ctx: Context, config: Config = {}): void {
           requireAdmin(principal)
           await ctx.credentials.unset(credentialRef(SHARED_DEEPSEEK_API_KEY_ENV))
           sendJson(res, 200, { managedModels: await managedModelsStatus(ctx) })
+          return
+        }
+
+        if (pathname === '/auth/system/managed-models/discover' && req.method === 'POST') {
+          requireAdmin(principal)
+          const body = await readJson(req, maxBodyBytes)
+          const baseURL = managedSiteBaseURL(stringField(body, 'baseURL') as string)
+          const apiKey = managedSiteDiscoveryKey(body)
+          const siteIdValue = stringField(body, 'siteId', false)
+          const existing = siteIdValue === undefined
+            ? undefined
+            : managedCustomProfiles(ctx).find(entry => entry.id === managedSiteDiscoveryId(siteIdValue))
+          if (siteIdValue !== undefined && existing === undefined) {
+            throw new AuthError('INVALID_INPUT', '统一模型站点不存在')
+          }
+          if (existing === undefined && apiKey === undefined) {
+            throw new AuthError('INVALID_INPUT', '获取新站点模型列表前必须填写 API Key')
+          }
+          const discovered = await ctx.llm.discoverModels(MANAGED_MODEL_SETTINGS_NS, {
+            ...existing === undefined ? {} : { provider: existing.provider },
+            baseURL,
+            api: 'openai-completions',
+            ...apiKey === undefined ? {} : { apiKey },
+          })
+          const models = discovered
+            .filter(model => model.id.length <= 128 && !/\s|[\u0000-\u001f\u007f]/u.test(model.id))
+            .map(model => ({ id: model.id, name: model.name ?? model.id }))
+          if (models.length === 0) throw new AuthError('INVALID_INPUT', '该站点没有返回可用模型')
+          sendJson(res, 200, { models })
           return
         }
 
