@@ -754,6 +754,8 @@ export function apply(ctx: Context, config: Config = {}): void {
               expectedState: state,
               expectedNonce: flow.nonce,
               idTokenExpected: true,
+            }, {
+              client_id: flow.settings.clientId,
             })
             const claims = tokens.claims()
             /* v8 ignore next -- openid-client validates the required sub claim before exposing ID Token claims. */

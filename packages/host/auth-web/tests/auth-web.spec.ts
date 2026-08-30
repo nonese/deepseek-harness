@@ -48,6 +48,7 @@ async function startOidcProvider(): Promise<{
   issuer: string
   captureAuthorization(url: URL): void
   setClaims(claims: Readonly<Record<string, unknown>>): void
+  requireBasicClientIdInBody(): void
   setSupportsPkce(value: boolean | undefined): void
 }> {
   const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
@@ -56,6 +57,7 @@ async function startOidcProvider(): Promise<{
   let expectedNonce = ''
   let expectedChallenge = ''
   let supportsPkce: boolean | undefined = true
+  let basicClientIdInBodyRequired = false
   let customClaims: Readonly<Record<string, unknown>> = {
     sub: 'oidc-user-1',
     preferred_username: 'external.user',
@@ -102,7 +104,9 @@ async function startOidcProvider(): Promise<{
       ).toString()
       const credentials = encodedCredentials.split(':').map(part => decodeURIComponent(part)).join(':')
       if (body.get('code') !== 'valid-code' || challenge !== expectedChallenge
-        || credentials !== 'harness-client:harness-secret') {
+        || credentials !== 'harness-client:harness-secret'
+        || (basicClientIdInBodyRequired
+          && (body.get('client_id') !== 'harness-client' || body.has('client_secret')))) {
         const failure = JSON.stringify({
           error: 'invalid_grant',
           error_description: JSON.stringify({
@@ -156,6 +160,9 @@ async function startOidcProvider(): Promise<{
     },
     setClaims(claims) {
       customClaims = claims
+    },
+    requireBasicClientIdInBody() {
+      basicClientIdInBodyRequired = true
     },
     setSupportsPkce(value) {
       supportsPkce = value
@@ -631,6 +638,7 @@ describe('real authentication route composition', () => {
     expect(start.status).toBe(302)
     const authorization = new URL(start.headers.get('location') as string)
     provider.captureAuthorization(authorization)
+    provider.requireBasicClientIdInBody()
     expect(authorization.origin + authorization.pathname).toBe(`${provider.issuer}/authorize`)
     expect(authorization.searchParams.get('code_challenge_method')).toBe('S256')
     expect(authorization.searchParams.get('scope')).toBe('openid profile email groups')
