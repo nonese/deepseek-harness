@@ -16,6 +16,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 // (settings/credentials invalidations ride the allowlist) into this program.
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import { ModelsSection } from './ModelsSection.tsx'
+import { isMultiUserBrowser } from './ServerModelsSection.tsx'
 import type { ModelsSectionInjected } from './ModelsSection.tsx'
 import { DeepSeekOnboardingDialog } from './DeepSeekOnboardingDialog.tsx'
 import type { DeepSeekOnboardingInjected } from './DeepSeekOnboardingDialog.tsx'
@@ -134,7 +135,7 @@ export function apply(ctx: ClientContext): void {
     name: 'settings.section',
     id: 'models',
     order: 10,
-    label: () => t('nav'),
+    label: () => t(isMultiUserBrowser() ? 'serverNav' : 'nav'),
     inject: injected,
     children: {
       'settings.models.provider-card': { kind: 'keyed', scope: 'root' },

@@ -23,6 +23,7 @@ import { deriveKeyRef, messageOf, protocolChoices, providerUsable } from './stor
 import type { ModelsSettingsStore, ModelsWire, ProviderRow } from './store.ts'
 import type { SettingsSchemaOperations } from './schema-operations.ts'
 import { ProviderEditor, type ProviderEditorProps } from './ProviderEditor.tsx'
+import { isMultiUserBrowser, ServerModelsSection } from './ServerModelsSection.tsx'
 import type { en } from './locales.ts'
 import styles from './ModelsSection.module.css'
 
@@ -199,6 +200,7 @@ export function providerCopy(template: string, target: ProviderIdentity): string
  */
 export function ModelsSection(props: ModelsSectionProps): ReactNode {
   const { controller, useSnapshot, api, schema, t, renderSlot } = props
+  if (isMultiUserBrowser()) return t === undefined ? null : <ServerModelsSection t={t} />
   if (
     controller === undefined || useSnapshot === undefined || api === undefined
     || schema === undefined || t === undefined

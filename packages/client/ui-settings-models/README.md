@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-client-ui-settings-models` is the Models settings page of the dsh web client: users configure API keys (stored write-only under the profile's credential reference), edit each provider's model list, and hand-declare custom pi-ai routes, with provider rows and one editor card at a time. The page joins the provider directory, the settings document, and the credential descriptions into one shared snapshot, so a row's state stays consistent across all three. It also walks first-run users through two ordered dialogs — a versioned internal-testing notice and the conditional official-DeepSeek credential step.
+`dsh-client-ui-settings-models` is the Models settings page of the dsh web client. A loopback browser can configure process provider API keys, model lists, and custom pi-ai routes. An authenticated multi-user browser instead receives a user-scoped Model sources view: it can enable administrator-managed models without reading or changing process-global settings and credentials. The package also walks first-run users through two ordered dialogs — a versioned internal-testing notice and the conditional official-DeepSeek credential step.
 
 ## Table of Contents
 
@@ -26,6 +26,8 @@ English | [中文](README.zh.md)
 ## Use this package
 
 Open the Models page from the Settings navigation to see every configured provider as a row. A whole-section provider whose key is not configured anywhere renders as its open setup card instead, but only in the first-run posture and only until the user closes that card. Each card kind owns its own open state, so closing one never discards a draft in another.
+
+In an authenticated multi-user deployment, the navigation entry reads **Model sources**. The page reads `/auth/preferences`, lists the non-secret model sites that an administrator published, and lets the current user enable or disable those managed models. The actual model choice remains per session: close Settings and use the model selector beside the message box; reopening that selector refreshes its catalog after a preference change. The page never calls the process-global settings or credentials Remotes in this mode.
 
 ### API keys
 
@@ -107,6 +109,7 @@ These limits define the editor's field coverage and the page's reach; they are c
 - **Only pi-ai routes can be hand-declared** — the custom-provider card writes into `llm-pi-ai`, the one namespace whose profiles describe a whole provider. A `llm-deepseek` route is a composition fact, not something this page can create.
 - **Interrogation covers OpenAI-compatible endpoints** — the adapter reads only that model-list response format, so a gateway speaking another protocol reports that it cannot be asked and its models are entered by hand.
 - **Undeclared live routes render nowhere** — a route registered without a configurable-provider declaration has no settings address; it stays visible in pickers but not on this page's rows.
+- **Multi-user browsers do not store private provider credentials** — an ordinary user can opt into administrator-managed model sites and select every permitted route per session, but only an administrator configures shared sites and API keys. Supporting private per-user provider keys requires a user-owned runtime credential resolver rather than access to the process-global editor.
 
 <a id="dev-note"></a>
 ### Dev Note
