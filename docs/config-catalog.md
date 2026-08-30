@@ -926,7 +926,7 @@ Source: [`packages/hooks/hooks-codex/src/index.ts:44`](../packages/hooks/hooks-c
 
 ## `@deepseek-ai/dsh-host-auth-web`
 
-Requires: `auth` · `connection` · `credentials` · `sessionController` · `sessions` · `typertGateway` · `webServer` · `workspaceRegistry`
+Requires: `auth` · `connection` · `credentials` · `settings` · `sessionController` · `sessions` · `typertGateway` · `webServer` · `workspaceRegistry`
 
 ```ts config-catalog
 /** Browser authentication route configuration. */
@@ -948,7 +948,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/host/auth-web/src/index.ts:58`](../packages/host/auth-web/src/index.ts)
+Source: [`packages/host/auth-web/src/index.ts:65`](../packages/host/auth-web/src/index.ts)
 
 <a id="deepseek-aidsh-host-directory-picker-browse"></a>
 

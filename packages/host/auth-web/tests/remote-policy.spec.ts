@@ -57,6 +57,7 @@ function fixture(): {
   bob: UserPaths
   optedIn: { value: boolean }
   credentialConfigured: { value: boolean }
+  modelSettings: { providers: Record<string, unknown> }
   liveSessions: Map<string, { header: { cwd?: string } }>
   workspaces: Map<string, { path: string }>
   inspectError: { value?: Error }
@@ -70,6 +71,7 @@ function fixture(): {
   const current = { value: principal(user('alice')) }
   const optedIn = { value: true }
   const credentialConfigured = { value: true }
+  const modelSettings: { providers: Record<string, unknown> } = { providers: {} }
   const liveSessions = new Map<string, { header: { cwd?: string } }>()
   const workspaces = new Map<string, { path: string }>()
   const inspectError: { value?: Error } = {}
@@ -85,6 +87,10 @@ function fixture(): {
     },
     credentials: {
       describe: () => Promise.resolve({ configured: credentialConfigured.value }),
+    },
+    settings: {
+      writable: true,
+      get: () => modelSettings,
     },
     sessions: { get: (id: SessionId) => liveSessions.get(id) },
     sessionController: {
@@ -105,6 +111,7 @@ function fixture(): {
     bob,
     optedIn,
     credentialConfigured,
+    modelSettings,
     liveSessions,
     workspaces,
     inspectError,
@@ -224,6 +231,44 @@ describe('per-user Remote policy', () => {
       request('llm', 'listConfigurableProviders'),
       () => Promise.resolve(directory),
     )).resolves.toEqual(directory)
+  })
+
+  it('hides a custom managed site until its user opts in', async () => {
+    const { ctx, modelSettings, optedIn } = fixture()
+    modelSettings.providers['managed-a1b2c3d4e5f6'] = {
+      api: 'openai-completions',
+      displayName: '校内 New API',
+      baseURL: 'https://new-api.example.test/v1',
+      apiKeyEnv: 'HARNESS_SHARED_MODEL_A1B2C3D4E5F6_API_KEY',
+      models: [{ id: 'deepseek-chat', name: 'deepseek-chat' }],
+    }
+    const policy = userScopedRemotePolicy(ctx)
+    const catalog = {
+      default: { provider: 'managed-a1b2c3d4e5f6', model: 'deepseek-chat' },
+      routableProviders: ['managed-a1b2c3d4e5f6', 'local'],
+      groups: [
+        { id: 'managed-a1b2c3d4e5f6', name: '校内 New API', models: [{ id: 'deepseek-chat', name: 'deepseek-chat' }] },
+        { id: 'local', name: 'Local', models: [{ id: 'local-model', name: 'local-model' }] },
+      ],
+      failures: [{ id: 'managed-a1b2c3d4e5f6', name: '校内 New API', message: 'unavailable' }],
+    }
+
+    optedIn.value = false
+    await expect(policy.invoke(
+      request('session', 'modelCatalog'),
+      () => Promise.resolve(catalog),
+    )).resolves.toEqual({
+      default: { provider: 'local', model: 'local-model' },
+      routableProviders: ['local'],
+      groups: [{ id: 'local', name: 'Local', models: [{ id: 'local-model', name: 'local-model' }] }],
+      failures: [],
+    })
+
+    optedIn.value = true
+    await expect(policy.invoke(
+      request('session', 'modelCatalog'),
+      () => Promise.resolve(catalog),
+    )).resolves.toBe(catalog)
   })
 
   it('filters the process-wide control stream to the caller sessions', async () => {

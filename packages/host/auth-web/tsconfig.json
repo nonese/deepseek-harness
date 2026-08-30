@@ -13,6 +13,8 @@
     { "path": "../../credentials/credentials" },
     { "path": "../../llm/llm" },
     { "path": "../../llm/llm-deepseek" },
+    { "path": "../../llm/llm-pi-ai" },
+    { "path": "../../settings/settings" },
     { "path": "../webserver" },
     { "path": "../../core/session" },
     { "path": "../../core/tools" },

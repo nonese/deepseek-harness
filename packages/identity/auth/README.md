@@ -27,11 +27,11 @@ Use this package to give a server composition one vocabulary for authenticated u
 
 ### Composition
 
-A provider supplies `ctx.auth`. HTTP and WebSocket transports authenticate an opaque cookie before constructing a user-scoped API view. Product-visible callers receive only `AuthUser`; password records and session-token digests remain provider-private. The service owns non-secret OIDC client settings, immutable issuer-and-subject identity bindings, the per-user opt-in for an administrator-managed DeepSeek credential, and project-path ownership without using usernames.
+A provider supplies `ctx.auth`. HTTP and WebSocket transports authenticate an opaque cookie before constructing a user-scoped API view. Product-visible callers receive only `AuthUser`; password records and session-token digests remain provider-private. The service owns non-secret OIDC client settings, immutable issuer-and-subject identity bindings, the per-user opt-in for administrator-managed model credentials, and project-path ownership without using usernames.
 
 ### Storage contract
 
-`UserPaths` separates projects, runtime state, settings, credentials, sessions, and attachments below one owner directory. Providers create these directories with owner-only permissions. Renaming a user does not move data. An OIDC login resolves an existing account only through the verified `(issuer, sub)` pair; mutable username and display-name claims cannot select a local account. The shared-DeepSeek preference and OIDC client parameters are authentication metadata rather than credential material.
+`UserPaths` separates projects, runtime state, settings, credentials, sessions, and attachments below one owner directory. Providers create these directories with owner-only permissions. Renaming a user does not move data. An OIDC login resolves an existing account only through the verified `(issuer, sub)` pair; mutable username and display-name claims cannot select a local account. The managed-model preference and OIDC client parameters are authentication metadata rather than credential material.
 
 -----
 

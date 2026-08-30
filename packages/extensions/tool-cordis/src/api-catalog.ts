@@ -591,14 +591,14 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: 'abstract sharedDeepSeekPreference(userId: UserId): SharedDeepSeekPreference',
-        description: 'Read whether one user opted into the administrator-managed DeepSeek credential.',
+        description: 'Read whether one user opted into administrator-managed model credentials.',
         parameters: [{ name: 'userId', description: 'stable user identity whose preference is requested.' }],
         returns: 'the detached preference; absent stored state resolves to disabled.',
       },
       {
         signature: 'abstract setSharedDeepSeekPreference(userId: UserId, enabled: boolean): Promise<void>',
-        description: 'Persist one user\'s choice to consume the administrator-managed DeepSeek credential.',
-        parameters: [{ name: 'userId', description: 'stable user identity whose preference changes.' }, { name: 'enabled', description: 'whether matching DeepSeek V4 Flash requests may use the managed credential.' }],
+        description: 'Persist one user\'s choice to consume administrator-managed model credentials.',
+        parameters: [{ name: 'userId', description: 'stable user identity whose preference changes.' }, { name: 'enabled', description: 'whether matching model requests may use managed credentials.' }],
       },
       {
         signature: 'abstract ownerForProjectPath(path: string): AuthUser | undefined',

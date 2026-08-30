@@ -112,9 +112,21 @@ export interface UpdateUserInput {
   status?: UserStatus
 }
 
-/** User-owned choice to consume the administrator-managed DeepSeek credential. */
+/** User-owned choice to consume administrator-managed model credentials. */
 export interface SharedDeepSeekPreference {
   enabled: boolean
+}
+
+/** Credential-reference prefix reserved for administrator-managed custom model sites. */
+export const MANAGED_MODEL_CREDENTIAL_PREFIX = 'HARNESS_SHARED_MODEL_'
+
+/**
+ * Identify a credential reference reserved for one administrator-managed custom model site.
+ * @param value - credential reference name to classify.
+ * @returns whether the reference belongs to the managed-model namespace.
+ */
+export function isManagedModelCredentialRef(value: string): boolean {
+  return /^HARNESS_SHARED_MODEL_[A-F0-9]{12}_API_KEY$/u.test(value)
 }
 
 /** Token-endpoint client authentication supported by the configured OIDC provider. */
@@ -280,16 +292,16 @@ export abstract class AuthService extends Service {
   abstract resetLocalPassword(userId: UserId, password: string): Promise<void>
 
   /**
-   * Read whether one user opted into the administrator-managed DeepSeek credential.
+   * Read whether one user opted into administrator-managed model credentials.
    * @param userId - stable user identity whose preference is requested.
    * @returns the detached preference; absent stored state resolves to disabled.
    */
   abstract sharedDeepSeekPreference(userId: UserId): SharedDeepSeekPreference
 
   /**
-   * Persist one user's choice to consume the administrator-managed DeepSeek credential.
+   * Persist one user's choice to consume administrator-managed model credentials.
    * @param userId - stable user identity whose preference changes.
-   * @param enabled - whether matching DeepSeek V4 Flash requests may use the managed credential.
+   * @param enabled - whether matching model requests may use managed credentials.
    */
   abstract setSharedDeepSeekPreference(userId: UserId, enabled: boolean): Promise<void>
 

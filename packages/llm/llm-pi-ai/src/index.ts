@@ -56,10 +56,17 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { isManagedModelCredentialRef } from '@deepseek-ai/dsh-auth'
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
 import { assertUsableApiKey, LlmError, resolveImageAttachmentAccess } from '@deepseek-ai/dsh-llm'
-import type { AdapterRegistrationHandle, DirectoryRegistrationHandle, LlmConfigurableProvider } from '@deepseek-ai/dsh-llm'
+import type {
+  AdapterRegistrationHandle,
+  DirectoryRegistrationHandle,
+  GenerateOptions,
+  LlmConfigurableProvider,
+} from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-fs'
+import type {} from '@deepseek-ai/dsh-session'
 import { deepEqualJson, installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
 import { PiAiAdapter } from './adapter.ts'
 import { authContextFrom, credentialStoreFrom } from './auth.ts'
@@ -167,6 +174,7 @@ export function apply(ctx: Context, config: Config): void {
   const resolveApiKey = async (
     provider: string,
     profile: ResolvedPiAiProviderProfile,
+    request?: GenerateOptions,
   ): Promise<string | undefined> => {
     const ref = profile.apiKeyEnv
     // Only a profile that names no credential at all defers to pi-ai's
@@ -175,6 +183,18 @@ export function apply(ctx: Context, config: Config): void {
     // (OPENAI_API_KEY and friends), billing another tenant for a request the
     // deployment meant to authenticate differently.
     if (ref === undefined) return undefined
+    if (request !== undefined && isManagedModelCredentialRef(ref)) {
+      const session = request.sessionId === undefined ? undefined : ctx.get('sessions')?.get(request.sessionId)
+      const cwd = session?.header.cwd
+      const auth = ctx.get('auth')
+      const owner = cwd === undefined ? undefined : auth?.ownerForProjectPath(cwd)
+      if (owner === undefined || auth?.sharedDeepSeekPreference(owner.id).enabled !== true) {
+        throw new LlmError(
+          `llm-pi-ai: administrator-managed provider route "${provider}" requires the project owner to enable shared model access`,
+          'MISSING_CREDENTIAL',
+        )
+      }
+    }
     const credentials = ctx.get('credentials')
     const hit = credentials !== undefined
       ? (await credentials.resolve(ref))?.value

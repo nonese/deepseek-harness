@@ -15,15 +15,13 @@ import type {
 import { ApiSessionNotFound } from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type { WorkspaceFollowFrame, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/types'
-import { credentialRef } from '@deepseek-ai/dsh-credentials'
-import {
-  PROVIDER as DEEPSEEK_PROVIDER,
-  SHARED_DEEPSEEK_API_KEY_ENV,
-  SHARED_DEEPSEEK_MODEL,
-} from '@deepseek-ai/dsh-llm-deepseek'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { TypertRemoteFailure } from '@deepseek-ai/dsh-typert-protocol'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
+import {
+  configuredManagedProviderModels,
+  managedCustomProfiles,
+} from './managed-models.ts'
 
 const ADMIN_NAMESPACES = new Set([
   'cordisInspect',
@@ -262,14 +260,41 @@ async function projectUnary(
     return { ...result, items: result.items.filter((_item, index) => owned[index]) }
   }
   if (endpoint === 'llm/listConfigurableProviders' && Array.isArray(value)) {
-    const credential = await ctx.credentials.describe(credentialRef(SHARED_DEEPSEEK_API_KEY_ENV))
-    const managed = credential.configured
-      && ctx.auth.sharedDeepSeekPreference(principal.user.id).enabled
+    const managed = ctx.auth.sharedDeepSeekPreference(principal.user.id).enabled
+      ? await configuredManagedProviderModels(ctx)
+      : new Map<string, readonly string[]>()
     return value.map((entry: unknown) => {
-      if (!managed || typeof entry !== 'object' || entry === null
-        || Reflect.get(entry, 'provider') !== DEEPSEEK_PROVIDER) return entry
-      return { ...entry, managedModels: [SHARED_DEEPSEEK_MODEL] }
+      if (typeof entry !== 'object' || entry === null) return entry
+      const models = managed.get(String(Reflect.get(entry, 'provider')))
+      return models === undefined ? entry : { ...entry, managedModels: [...models] }
     })
+  }
+  if (endpoint === 'session/modelCatalog' && typeof value === 'object' && value !== null) {
+    const catalog = value as {
+      default: { provider: string; model: string }
+      routableProviders: string[]
+      groups: Array<{ id: string; name: string; models: Array<{ id: string; name: string }> }>
+      failures: Array<{ id: string; name: string; message: string }>
+    }
+    const configured = ctx.auth.sharedDeepSeekPreference(principal.user.id).enabled
+      ? await configuredManagedProviderModels(ctx)
+      : new Map<string, readonly string[]>()
+    const hidden = new Set(managedCustomProfiles(ctx)
+      .map(entry => entry.provider)
+      .filter(provider => !configured.has(provider)))
+    if (hidden.size === 0) return value
+    const groups = catalog.groups.filter(group => !hidden.has(group.id))
+    const firstGroup = groups[0]
+    const first = firstGroup?.models[0]
+    return {
+      ...catalog,
+      default: hidden.has(catalog.default.provider) && firstGroup !== undefined && first !== undefined
+        ? { provider: firstGroup.id, model: first.id }
+        : catalog.default,
+      routableProviders: catalog.routableProviders.filter(provider => !hidden.has(provider)),
+      groups,
+      failures: catalog.failures.filter(failure => !hidden.has(failure.id)),
+    }
   }
   if (endpoint === 'agentPresets/list'
     && principal.user.role !== 'admin'

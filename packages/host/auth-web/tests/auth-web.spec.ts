@@ -224,6 +224,7 @@ async function boot(options: BootOptions = {}): Promise<BootResult> {
 
   const workspaces: Array<Record<string, unknown>> = []
   const sessions: Array<{ header: { cwd?: string; createdAt: number } }> = []
+  const modelSettings: { providers: Record<string, unknown> } = { providers: {} }
   let authenticator: ConnectionRequestAuthenticator | undefined
   const testDeps = {
     name: 'auth-web-test-deps',
@@ -236,6 +237,18 @@ async function boot(options: BootOptions = {}): Promise<BootResult> {
         },
       } as never)
       context.provide('sessionController', { inspect: vi.fn() } as never)
+      context.provide('settings', {
+        writable: true,
+        get: () => structuredClone(modelSettings),
+        async mutate(_namespace: string, ops: Array<{ op: 'set' | 'unset'; path: string[]; value?: unknown }>) {
+          for (const op of ops) {
+            const provider = op.path[1]
+            if (op.path[0] !== 'providers' || provider === undefined) throw new Error('unexpected settings path')
+            if (op.op === 'set') modelSettings.providers[provider] = structuredClone(op.value)
+            else Reflect.deleteProperty(modelSettings.providers, provider)
+          }
+        },
+      } as never)
       context.provide('typertGateway', {
         registerMiddleware: () => () => Promise.resolve(),
       } as never)
@@ -407,12 +420,18 @@ describe('real authentication route composition', () => {
         projectsManaged: true,
         administratorContentAccess: false,
       },
-      sharedDeepSeek: {
-        provider: 'deepseek-official',
-        model: 'deepseek-v4-flash',
-        name: 'DeepSeek-V4-Flash',
+      managedModels: {
         configured: false,
-        writable: true,
+        sites: [{
+          id: 'deepseek-official',
+          kind: 'deepseek-official',
+          provider: 'deepseek-official',
+          name: 'DeepSeek',
+          baseURL: 'https://api.deepseek.com',
+          models: [{ id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash' }],
+          configured: false,
+          writable: true,
+        }],
         enabledUsers: 0,
       },
       limits: {
@@ -441,34 +460,35 @@ describe('real authentication route composition', () => {
       headers: { cookie: memberCookie as string },
     })
     expect(await initialPreference.json()).toMatchObject({
-      sharedDeepSeek: { configured: false, enabled: false, model: 'deepseek-v4-flash' },
+      managedModels: {
+        configured: false,
+        enabled: false,
+        sites: [{ provider: 'deepseek-official', configured: false }],
+      },
     })
     const unavailableOptIn = await fetch(`${origin}/auth/preferences`, {
       method: 'PATCH',
       headers: { cookie: memberCookie as string, origin, 'content-type': 'application/json' },
-      body: JSON.stringify({ sharedDeepSeekEnabled: true }),
+      body: JSON.stringify({ managedModelsEnabled: true }),
     })
     expect(unavailableOptIn.status).toBe(400)
 
     const sharedKey = 'sk-shared-secret-that-must-not-return'
-    const configured = await fetch(`${origin}/auth/system/shared-deepseek`, {
+    const configured = await fetch(`${origin}/auth/system/managed-models/deepseek-official`, {
       method: 'PUT',
       headers: { cookie: cookie as string, origin, 'content-type': 'application/json' },
       body: JSON.stringify({ apiKey: sharedKey }),
     })
     const configuredBody: unknown = await configured.json()
-    expect(configuredBody).toEqual({
-      sharedDeepSeek: {
-        provider: 'deepseek-official',
-        model: 'deepseek-v4-flash',
-        name: 'DeepSeek-V4-Flash',
+    expect(configuredBody).toMatchObject({
+      managedModels: {
         configured: true,
-        writable: true,
+        sites: [{ provider: 'deepseek-official', configured: true, writable: true }],
       },
     })
     expect(JSON.stringify(configuredBody)).not.toContain(sharedKey)
 
-    const memberWrite = await fetch(`${origin}/auth/system/shared-deepseek`, {
+    const memberWrite = await fetch(`${origin}/auth/system/managed-models/deepseek-official`, {
       method: 'PUT',
       headers: { cookie: memberCookie as string, origin, 'content-type': 'application/json' },
       body: JSON.stringify({ apiKey: 'sk-member-must-be-rejected' }),
@@ -478,17 +498,73 @@ describe('real authentication route composition', () => {
     const enabled = await fetch(`${origin}/auth/preferences`, {
       method: 'PATCH',
       headers: { cookie: memberCookie as string, origin, 'content-type': 'application/json' },
-      body: JSON.stringify({ sharedDeepSeekEnabled: true }),
+      body: JSON.stringify({ managedModelsEnabled: true }),
     })
-    expect(await enabled.json()).toMatchObject({ sharedDeepSeek: { configured: true, enabled: true } })
+    expect(await enabled.json()).toMatchObject({ managedModels: { configured: true, enabled: true } })
     const updatedSystem = await fetch(`${origin}/auth/system`, { headers: { cookie: cookie as string } })
-    expect(await updatedSystem.json()).toMatchObject({ sharedDeepSeek: { configured: true, enabledUsers: 1 } })
+    expect(await updatedSystem.json()).toMatchObject({ managedModels: { configured: true, enabledUsers: 1 } })
 
-    const cleared = await fetch(`${origin}/auth/system/shared-deepseek`, {
+    const customKey = 'sk-custom-secret-that-must-not-return'
+    const custom = await fetch(`${origin}/auth/system/managed-models/sites`, {
+      method: 'POST',
+      headers: { cookie: cookie as string, origin, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: '校内 New API',
+        baseURL: 'https://new-api.example.test/v1/',
+        models: ['deepseek-chat', 'gpt-4.1-mini'],
+        apiKey: customKey,
+      }),
+    })
+    expect(custom.status).toBe(201)
+    const customBody = await custom.json() as { managedModels: { sites: Array<{ id: string; kind: string }> } }
+    expect(JSON.stringify(customBody)).not.toContain(customKey)
+    const customSite = customBody.managedModels.sites.find(site => site.kind === 'openai-compatible')
+    expect(customSite).toBeDefined()
+    expect(customBody).toMatchObject({
+      managedModels: {
+        sites: [
+          { provider: 'deepseek-official', configured: true },
+          {
+            id: customSite?.id,
+            name: '校内 New API',
+            baseURL: 'https://new-api.example.test/v1',
+            models: [{ id: 'deepseek-chat' }, { id: 'gpt-4.1-mini' }],
+            configured: true,
+          },
+        ],
+      },
+    })
+
+    const updatedCustom = await fetch(`${origin}/auth/system/managed-models/sites/${String(customSite?.id)}`, {
+      method: 'PUT',
+      headers: { cookie: cookie as string, origin, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: '校内 New API 2',
+        baseURL: 'https://new-api.example.test/v2',
+        models: ['deepseek-reasoner'],
+      }),
+    })
+    const updatedCustomBody = await updatedCustom.json() as {
+      managedModels: { sites: Array<{ id: string; name: string; models: Array<{ id: string }> }> }
+    }
+    expect(updatedCustomBody.managedModels.sites.find(site => site.id === customSite?.id)).toMatchObject({
+      name: '校内 New API 2',
+      models: [{ id: 'deepseek-reasoner' }],
+    })
+
+    const deletedCustom = await fetch(`${origin}/auth/system/managed-models/sites/${String(customSite?.id)}`, {
       method: 'DELETE',
       headers: { cookie: cookie as string, origin },
     })
-    expect(await cleared.json()).toMatchObject({ sharedDeepSeek: { configured: false } })
+    expect(await deletedCustom.json()).toMatchObject({
+      managedModels: { sites: [{ provider: 'deepseek-official' }] },
+    })
+
+    const cleared = await fetch(`${origin}/auth/system/managed-models/deepseek-official`, {
+      method: 'DELETE',
+      headers: { cookie: cookie as string, origin },
+    })
+    expect(await cleared.json()).toMatchObject({ managedModels: { configured: false } })
 
     const project = await fetch(`${origin}/auth/projects`, {
       method: 'POST',
@@ -999,7 +1075,7 @@ describe('real authentication route composition', () => {
     Reflect.set(context.workspaceRegistry, 'create', originalCreate)
 
     for (const apiKey of ['', 'bad\u0000key']) {
-      expect((await fetch(`${origin}/auth/system/shared-deepseek`, {
+      expect((await fetch(`${origin}/auth/system/managed-models/deepseek-official`, {
         method: 'PUT',
         headers: jsonHeaders(origin, adminCookie),
         body: JSON.stringify({ apiKey }),

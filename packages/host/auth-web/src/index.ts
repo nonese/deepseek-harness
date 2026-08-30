@@ -26,17 +26,23 @@ import type {
   ConnectionTrustRequest,
 } from '@deepseek-ai/dsh-client-connection'
 import { normalizeApiKey } from '@deepseek-ai/dsh-llm'
-import {
-  PROVIDER as DEEPSEEK_PROVIDER,
-  SHARED_DEEPSEEK_API_KEY_ENV,
-  SHARED_DEEPSEEK_MODEL,
-} from '@deepseek-ai/dsh-llm-deepseek'
+import { SHARED_DEEPSEEK_API_KEY_ENV } from '@deepseek-ai/dsh-llm-deepseek'
+import type { PiAiProviderProfile } from '@deepseek-ai/dsh-llm-pi-ai'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { IndexInjection } from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-session'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-workspace'
 import * as oidc from 'openid-client'
+import {
+  MANAGED_MODEL_PROVIDER_PREFIX,
+  MANAGED_MODEL_SETTINGS_NS,
+  MAX_MANAGED_MODEL_SITES,
+  MAX_MANAGED_SITE_MODELS,
+  managedCustomProfiles,
+  managedModelCredentialName,
+  managedModelsStatus,
+} from './managed-models.ts'
 import { userScopedRemotePolicy } from './remote-policy.ts'
 
 /** Stable Cordis plugin name. */
@@ -47,6 +53,7 @@ export const inject = [
   'auth',
   'connection',
   'credentials',
+  'settings',
   'sessionController',
   'sessions',
   'typertGateway',
@@ -446,15 +453,54 @@ function dynamicCordisGuard(ctx: Context, exec: Readonly<ToolExecution>): string
     : DYNAMIC_CORDIS_ADMIN_MESSAGE
 }
 
-async function sharedDeepSeekStatus(ctx: Context, userId?: UserId) {
-  const credential = await ctx.credentials.describe(credentialRef(SHARED_DEEPSEEK_API_KEY_ENV))
+function managedSiteName(value: string): string {
+  const name = value.normalize('NFKC').trim()
+  if (name.length === 0 || name.length > 80) {
+    throw new AuthError('INVALID_INPUT', '站点名称长度必须为 1–80 个字符')
+  }
+  return name
+}
+
+function managedSiteBaseURL(value: string): string {
+  let parsed: URL
+  try {
+    parsed = new URL(value.trim())
+  } catch {
+    throw new AuthError('INVALID_INPUT', 'Base URL 必须是有效的 HTTP 或 HTTPS 地址')
+  }
+  if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
+    || parsed.username.length > 0 || parsed.password.length > 0
+    || parsed.search.length > 0 || parsed.hash.length > 0) {
+    throw new AuthError('INVALID_INPUT', 'Base URL 只允许 HTTP/HTTPS，且不能包含账号、查询参数或片段')
+  }
+  return parsed.href.replace(/\/+$/u, '')
+}
+
+function managedSiteModels(values: string[]): string[] {
+  const models = [...new Set(values.map(value => value.normalize('NFKC').trim()))]
+  if (models.length === 0 || models.length > MAX_MANAGED_SITE_MODELS) {
+    throw new AuthError('INVALID_INPUT', `每个站点必须配置 1–${String(MAX_MANAGED_SITE_MODELS)} 个模型`)
+  }
+  for (const model of models) {
+    if (model.length === 0 || model.length > 128 || /\s/u.test(model) || /[\u0000-\u001f\u007f]/u.test(model)) {
+      throw new AuthError('INVALID_INPUT', '模型 ID 必须为 1–128 个不含空白或控制字符的字符')
+    }
+  }
+  return models
+}
+
+function managedSiteProfile(
+  id: string,
+  name: string,
+  baseURL: string,
+  models: readonly string[],
+): PiAiProviderProfile {
   return {
-    provider: DEEPSEEK_PROVIDER,
-    model: SHARED_DEEPSEEK_MODEL,
-    name: 'DeepSeek-V4-Flash',
-    configured: credential.configured,
-    writable: credential.writable,
-    ...userId === undefined ? {} : { enabled: ctx.auth.sharedDeepSeekPreference(userId).enabled },
+    displayName: name,
+    apiKeyEnv: managedModelCredentialName(id),
+    api: 'openai-completions',
+    baseURL,
+    models: models.map(model => ({ id: model, name: model })),
   }
 }
 
@@ -910,20 +956,20 @@ export function apply(ctx: Context, config: Config = {}): void {
         }
 
         if (pathname === '/auth/preferences' && req.method === 'GET') {
-          sendJson(res, 200, { sharedDeepSeek: await sharedDeepSeekStatus(ctx, principal.user.id) })
+          sendJson(res, 200, { managedModels: await managedModelsStatus(ctx, principal.user.id) })
           return
         }
 
         if (pathname === '/auth/preferences' && req.method === 'PATCH') {
           const body = await readJson(req, maxBodyBytes)
-          const enabled = booleanField(body, 'sharedDeepSeekEnabled')
-          const status = await sharedDeepSeekStatus(ctx, principal.user.id)
+          const enabled = booleanField(body, 'managedModelsEnabled')
+          const status = await managedModelsStatus(ctx, principal.user.id)
           if (enabled && !status.configured) {
-            throw new AuthError('INVALID_INPUT', '管理员尚未配置统一 DeepSeek API Key')
+            throw new AuthError('INVALID_INPUT', '管理员尚未配置任何统一模型 API')
           }
           await ctx.auth.setSharedDeepSeekPreference(principal.user.id, enabled)
           sendJson(res, 200, {
-            sharedDeepSeek: { ...await sharedDeepSeekStatus(ctx, principal.user.id), enabled },
+            managedModels: { ...await managedModelsStatus(ctx, principal.user.id), enabled },
           })
           return
         }
@@ -1002,7 +1048,7 @@ export function apply(ctx: Context, config: Config = {}): void {
           return
         }
 
-        if (pathname === '/auth/system/shared-deepseek' && req.method === 'PUT') {
+        if (pathname === '/auth/system/managed-models/deepseek-official' && req.method === 'PUT') {
           requireAdmin(principal)
           const body = await readJson(req, maxBodyBytes)
           const checked = normalizeApiKey(stringField(body, 'apiKey') as string)
@@ -1013,14 +1059,103 @@ export function apply(ctx: Context, config: Config = {}): void {
             )
           }
           await ctx.credentials.set(credentialRef(SHARED_DEEPSEEK_API_KEY_ENV), checked.value)
-          sendJson(res, 200, { sharedDeepSeek: await sharedDeepSeekStatus(ctx) })
+          sendJson(res, 200, { managedModels: await managedModelsStatus(ctx) })
           return
         }
 
-        if (pathname === '/auth/system/shared-deepseek' && req.method === 'DELETE') {
+        if (pathname === '/auth/system/managed-models/deepseek-official' && req.method === 'DELETE') {
           requireAdmin(principal)
           await ctx.credentials.unset(credentialRef(SHARED_DEEPSEEK_API_KEY_ENV))
-          sendJson(res, 200, { sharedDeepSeek: await sharedDeepSeekStatus(ctx) })
+          sendJson(res, 200, { managedModels: await managedModelsStatus(ctx) })
+          return
+        }
+
+        if (pathname === '/auth/system/managed-models/sites' && req.method === 'POST') {
+          requireAdmin(principal)
+          if (!ctx.settings.writable) throw new AuthError('INVALID_INPUT', '模型站点配置文件不可写')
+          if (managedCustomProfiles(ctx).length >= MAX_MANAGED_MODEL_SITES) {
+            throw new AuthError('INVALID_INPUT', `自定义统一模型站点不能超过 ${String(MAX_MANAGED_MODEL_SITES)} 个`)
+          }
+          const body = await readJson(req, maxBodyBytes)
+          const name = managedSiteName(stringField(body, 'name') as string)
+          const baseURL = managedSiteBaseURL(stringField(body, 'baseURL') as string)
+          const models = managedSiteModels(stringArrayField(body, 'models'))
+          const checked = normalizeApiKey(stringField(body, 'apiKey') as string)
+          if (!checked.ok) {
+            throw new AuthError(
+              'INVALID_INPUT',
+              checked.reason === 'empty' ? 'API Key 不能为空' : 'API Key 包含不支持的字符',
+            )
+          }
+          let id: string
+          do {
+            id = randomUUID().replaceAll('-', '').slice(0, 12)
+          } while (managedCustomProfiles(ctx).some(entry => entry.id === id))
+          const provider = `${MANAGED_MODEL_PROVIDER_PREFIX}${id}`
+          const credential = managedModelCredentialName(id)
+          const credentialStatus = await ctx.credentials.describe(credentialRef(credential))
+          if (!credentialStatus.writable) throw new AuthError('INVALID_INPUT', '统一模型凭据文件不可写')
+          await ctx.credentials.set(credentialRef(credential), checked.value)
+          try {
+            await ctx.settings.mutate(MANAGED_MODEL_SETTINGS_NS, [{
+              op: 'set',
+              path: ['providers', provider],
+              value: managedSiteProfile(id, name, baseURL, models),
+            }])
+          } catch (error) {
+            await ctx.credentials.unset(credentialRef(credential)).catch((cleanupError: unknown) => {
+              ctx.logger.error('host-auth-web: failed to remove a credential after managed-site creation was refused')
+              ctx.logger.error(cleanupError)
+            })
+            throw error
+          }
+          sendJson(res, 201, { managedModels: await managedModelsStatus(ctx) })
+          return
+        }
+
+        const managedSiteMatch = /^\/auth\/system\/managed-models\/sites\/([a-f0-9]{12})$/.exec(pathname)
+        if (managedSiteMatch !== null && req.method === 'PUT') {
+          requireAdmin(principal)
+          if (!ctx.settings.writable) throw new AuthError('INVALID_INPUT', '模型站点配置文件不可写')
+          const id = managedSiteMatch[1] as string
+          const existing = managedCustomProfiles(ctx).find(entry => entry.id === id)
+          if (existing === undefined) throw new AuthError('INVALID_INPUT', '统一模型站点不存在')
+          const body = await readJson(req, maxBodyBytes)
+          const name = managedSiteName(stringField(body, 'name') as string)
+          const baseURL = managedSiteBaseURL(stringField(body, 'baseURL') as string)
+          const models = managedSiteModels(stringArrayField(body, 'models'))
+          const apiKey = stringField(body, 'apiKey', false)
+          const checked = apiKey === undefined ? undefined : normalizeApiKey(apiKey)
+          if (checked !== undefined && !checked.ok) {
+            throw new AuthError(
+              'INVALID_INPUT',
+              checked.reason === 'empty' ? 'API Key 不能为空' : 'API Key 包含不支持的字符',
+            )
+          }
+          await ctx.settings.mutate(MANAGED_MODEL_SETTINGS_NS, [{
+            op: 'set',
+            path: ['providers', existing.provider],
+            value: managedSiteProfile(id, name, baseURL, models),
+          }])
+          if (checked?.ok === true) {
+            await ctx.credentials.set(credentialRef(existing.credential), checked.value)
+          }
+          sendJson(res, 200, { managedModels: await managedModelsStatus(ctx) })
+          return
+        }
+
+        if (managedSiteMatch !== null && req.method === 'DELETE') {
+          requireAdmin(principal)
+          if (!ctx.settings.writable) throw new AuthError('INVALID_INPUT', '模型站点配置文件不可写')
+          const id = managedSiteMatch[1] as string
+          const existing = managedCustomProfiles(ctx).find(entry => entry.id === id)
+          if (existing === undefined) throw new AuthError('INVALID_INPUT', '统一模型站点不存在')
+          await ctx.settings.mutate(MANAGED_MODEL_SETTINGS_NS, [{
+            op: 'unset',
+            path: ['providers', existing.provider],
+          }])
+          await ctx.credentials.unset(credentialRef(existing.credential))
+          sendJson(res, 200, { managedModels: await managedModelsStatus(ctx) })
           return
         }
 
@@ -1069,7 +1204,7 @@ export function apply(ctx: Context, config: Config = {}): void {
           requireAdmin(principal)
           const users = ctx.auth.listUsers()
           const dataRoot = dirname(dirname(ctx.auth.userPaths(principal.user.id).root))
-          const sharedDeepSeek = await sharedDeepSeekStatus(ctx)
+          const managedModels = await managedModelsStatus(ctx)
           const oidcState = await oidcStatus(ctx)
           sendJson(res, 200, {
             runtime: {
@@ -1098,8 +1233,8 @@ export function apply(ctx: Context, config: Config = {}): void {
               projectsManaged: true,
               administratorContentAccess: false,
             },
-            sharedDeepSeek: {
-              ...sharedDeepSeek,
+            managedModels: {
+              ...managedModels,
               enabledUsers: users.filter(user => ctx.auth.sharedDeepSeekPreference(user.id).enabled).length,
             },
             limits: { maxBodyBytes, projectFileMaxEntries, projectFilePreviewMaxBytes, projectFileUploadMaxBytes },

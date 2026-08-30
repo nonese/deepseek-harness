@@ -10,6 +10,7 @@ import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import { FileSettingsProvider } from '@deepseek-ai/dsh-settings-file'
 import * as LlmPiAi from '@deepseek-ai/dsh-llm-pi-ai'
 import AuthorizationService from '@deepseek-ai/dsh-authorization'
+import { SessionId } from '@deepseek-ai/dsh-session'
 import { assemble } from './assemble.ts'
 import { closeMockServers, mockServer, textEvents } from './mock-server.ts'
 
@@ -40,7 +41,10 @@ async function home(): Promise<string> {
 async function boot(
   dir: string,
   config: LlmPiAi.Config,
-  options: { authorization?: boolean } = {},
+  options: {
+    authorization?: boolean
+    managedAccess?: { enabled: { value: boolean }; cwd: string }
+  } = {},
 ): Promise<Context> {
   const ctx = new Context()
   cleanups.push(async () => {
@@ -50,6 +54,16 @@ async function boot(
   await ctx.plugin(FileSettingsProvider, { path: join(dir, 'settings.yaml'), watch: false })
   await ctx.plugin(LocalCredentialProvider, { path: join(dir, '.credentials.yaml'), watch: false })
   if (options.authorization === true) await ctx.plugin(AuthorizationService)
+  if (options.managedAccess !== undefined) {
+    const access = options.managedAccess
+    ctx.provide('sessions', {
+      get: (id: SessionId) => id === SessionId('managed-session') ? { header: { cwd: access.cwd } } : undefined,
+    } as never)
+    ctx.provide('auth', {
+      ownerForProjectPath: (path: string) => path === access.cwd ? { id: 'managed-owner' } : undefined,
+      sharedDeepSeekPreference: () => ({ enabled: access.enabled.value }),
+    } as never)
+  }
   await ctx.plugin(LlmPiAi, config)
   return ctx
 }
@@ -159,6 +173,48 @@ describe('request-level dynamic profiles', () => {
     await ctx.credentials.set(credentialRef('PI_DYNAMIC_KEY'), 'pk-two')
     await assemble(ctx, { provider: 'deepseek', model: 'deepseek-v4-flash', messages: [] })
     expect(server.headers[1]?.authorization).toBe('Bearer pk-two')
+  })
+
+  it('uses an administrator-managed credential only for an opted-in project owner', async () => {
+    const dir = await home()
+    const reference = 'HARNESS_SHARED_MODEL_A1B2C3D4E5F6_API_KEY'
+    await writeFile(
+      join(dir, '.credentials.yaml'),
+      `version: 1\nrefs:\n  ${reference}: managed-key\n`,
+      { mode: 0o600 },
+    )
+    const server = await mockServer([{ events: textEvents }])
+    const enabled = { value: false }
+    const cwd = join(dir, 'users', 'managed-owner', 'projects', 'one')
+    const ctx = await boot(dir, {
+      providers: {
+        'managed-a1b2c3d4e5f6': {
+          api: 'openai-completions',
+          baseURL: server.url,
+          apiKeyEnv: reference,
+          models: [{ id: 'deepseek-chat' }],
+        },
+      },
+    }, { managedAccess: { enabled, cwd } })
+
+    const denied = await assemble(ctx, {
+      provider: 'managed-a1b2c3d4e5f6',
+      model: 'deepseek-chat',
+      messages: [],
+      sessionId: SessionId('managed-session'),
+    })
+    expect(denied.finish).toMatchObject({ kind: 'error', failure: { code: 'MISSING_CREDENTIAL' } })
+    expect(server.paths).toEqual([])
+
+    enabled.value = true
+    const allowed = await assemble(ctx, {
+      provider: 'managed-a1b2c3d4e5f6',
+      model: 'deepseek-chat',
+      messages: [],
+      sessionId: SessionId('managed-session'),
+    })
+    expect(allowed.message.content).toEqual([{ type: 'text', text: 'hello' }])
+    expect(server.headers[0]?.authorization).toBe('Bearer managed-key')
   })
 
   it('re-registers routes in place when a captured retry policy changes', async () => {

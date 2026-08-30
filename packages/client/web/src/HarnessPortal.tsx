@@ -28,18 +28,26 @@ interface ProjectsResponse {
   projects: ProjectView[]
 }
 
-interface SharedDeepSeekStatus {
-  provider: 'deepseek-official'
-  model: 'deepseek-v4-flash'
+interface ManagedModelSiteStatus {
+  id: string
+  kind: 'deepseek-official' | 'openai-compatible'
+  provider: string
   name: string
+  baseURL: string
+  models: readonly { id: string; name: string }[]
   configured: boolean
   writable: boolean
+}
+
+interface ManagedModelsStatus {
+  configured: boolean
+  sites: readonly ManagedModelSiteStatus[]
   enabled?: boolean
   enabledUsers?: number
 }
 
 interface PreferencesResponse {
-  sharedDeepSeek: SharedDeepSeekStatus & { enabled: boolean }
+  managedModels: ManagedModelsStatus & { enabled: boolean }
 }
 
 type OidcClientAuthMethod = 'client_secret_basic' | 'client_secret_post' | 'none'
@@ -103,7 +111,7 @@ interface SystemSettingsResponse {
     projectsManaged: boolean
     administratorContentAccess: boolean
   }
-  sharedDeepSeek: SharedDeepSeekStatus & { enabledUsers: number }
+  managedModels: ManagedModelsStatus & { enabledUsers: number }
   limits: {
     maxBodyBytes: number
     projectFileMaxEntries: number
@@ -385,7 +393,7 @@ export function HarnessPortal(props: HarnessPortalProps) {
 }
 
 function UserSettingsView({ t }: { t: WebTranslate }) {
-  const [preference, setPreference] = useState<PreferencesResponse['sharedDeepSeek']>()
+  const [preference, setPreference] = useState<PreferencesResponse['managedModels']>()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>()
@@ -395,7 +403,7 @@ function UserSettingsView({ t }: { t: WebTranslate }) {
     setLoading(true)
     setError(undefined)
     try {
-      setPreference((await jsonRequest<PreferencesResponse>('/auth/preferences')).sharedDeepSeek)
+      setPreference((await jsonRequest<PreferencesResponse>('/auth/preferences')).managedModels)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
     } finally {
@@ -411,9 +419,9 @@ function UserSettingsView({ t }: { t: WebTranslate }) {
     setNotice(undefined)
     void jsonRequest<PreferencesResponse>('/auth/preferences', {
       method: 'PATCH',
-      body: JSON.stringify({ sharedDeepSeekEnabled: enabled }),
+      body: JSON.stringify({ managedModelsEnabled: enabled }),
     }).then((response) => {
-      setPreference(response.sharedDeepSeek)
+      setPreference(response.managedModels)
       setNotice(enabled ? t('preferences.enabledNotice') : t('preferences.disabledNotice'))
     }).catch((reason: unknown) => {
       setError(reason instanceof Error ? reason.message : String(reason))
@@ -433,16 +441,27 @@ function UserSettingsView({ t }: { t: WebTranslate }) {
       {notice !== undefined && <div className={css.pageNotice} role="status">{notice}</div>}
       {preference === undefined && loading && <div className={css.settingsLoading}>{t('preferences.loading')}</div>}
       {preference !== undefined && (
-        <section className={css.preferenceCard} aria-labelledby="shared-deepseek-user-title">
+        <section className={css.preferenceCard} aria-labelledby="managed-models-user-title">
           <div className={css.preferenceHeader}>
             <div>
               <span className={css.eyebrow}>{t('preferences.modelTitle')}</span>
-              <h2 id="shared-deepseek-user-title">{preference.name}</h2>
+              <h2 id="managed-models-user-title">{t('preferences.modelHeading')}</h2>
               <p>{t('preferences.modelDescription')}</p>
             </div>
             <span className={preference.configured ? css.stateReady : css.statePending}>
               {preference.configured ? t('preferences.adminConfigured') : t('preferences.adminNotConfigured')}
             </span>
+          </div>
+          <div className={css.preferenceSites} aria-label={t('preferences.availableSites')}>
+            {preference.sites.map(site => (
+              <div key={site.id}>
+                <strong>{site.name}</strong>
+                <span>{site.models.map(model => model.name).join(' · ')}</span>
+                <span className={site.configured ? css.stateReady : css.statePending}>
+                  {site.configured ? t('state.configured') : t('state.notConfigured')}
+                </span>
+              </div>
+            ))}
           </div>
           <div className={css.preferenceRow}>
             <div>
@@ -470,9 +489,35 @@ function formatBytes(bytes: number, t: WebTranslate): string {
   return `${String(Math.round(bytes / 1024))} ${t('units.kibibytes')}`
 }
 
+interface ManagedSiteDraft {
+  name: string
+  baseURL: string
+  models: string
+  apiKey: string
+}
+
+function emptyManagedSiteDraft(): ManagedSiteDraft {
+  return { name: '', baseURL: '', models: '', apiKey: '' }
+}
+
+function managedSiteDraft(site: ManagedModelSiteStatus, apiKey = ''): ManagedSiteDraft {
+  return {
+    name: site.name,
+    baseURL: site.baseURL,
+    models: site.models.map(model => model.id).join('\n'),
+    apiKey,
+  }
+}
+
+function managedSiteModels(value: string): string[] {
+  return value.split(/[\s,]+/u).map(model => model.trim()).filter(Boolean)
+}
+
 function SystemSettingsView({ t }: { t: WebTranslate }) {
   const [settings, setSettings] = useState<SystemSettingsResponse>()
   const [apiKey, setApiKey] = useState('')
+  const [newSite, setNewSite] = useState<ManagedSiteDraft>(emptyManagedSiteDraft)
+  const [siteDrafts, setSiteDrafts] = useState<Record<string, ManagedSiteDraft>>({})
   const [oidcDraft, setOidcDraft] = useState<OidcDraft>(defaultOidcDraft)
   const [oidcSecret, setOidcSecret] = useState('')
   const [oidcTest, setOidcTest] = useState<OidcTestResult>()
@@ -490,6 +535,9 @@ function SystemSettingsView({ t }: { t: WebTranslate }) {
       const response = await jsonRequest<SystemSettingsResponse>('/auth/system')
       setSettings(response)
       setOidcDraft(oidcDraftFrom(response.authentication.oidc))
+      setSiteDrafts(Object.fromEntries(response.managedModels.sites
+        .filter(site => site.kind === 'openai-compatible')
+        .map(site => [site.id, managedSiteDraft(site)])))
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
     } finally {
@@ -499,10 +547,13 @@ function SystemSettingsView({ t }: { t: WebTranslate }) {
 
   useEffect(() => { void refresh() }, [refresh])
 
-  const updateSharedStatus = (sharedDeepSeek: SharedDeepSeekStatus): void => {
+  const updateManagedStatus = (managedModels: ManagedModelsStatus): void => {
     setSettings(current => current === undefined
       ? current
-      : { ...current, sharedDeepSeek: { ...current.sharedDeepSeek, ...sharedDeepSeek } })
+      : { ...current, managedModels: { ...current.managedModels, ...managedModels } })
+    setSiteDrafts(current => Object.fromEntries(managedModels.sites
+      .filter(site => site.kind === 'openai-compatible')
+      .map(site => [site.id, managedSiteDraft(site, current[site.id]?.apiKey ?? '')])))
   }
 
   const saveSharedCredential = (event: FormEvent): void => {
@@ -511,11 +562,11 @@ function SystemSettingsView({ t }: { t: WebTranslate }) {
     setSaving(true)
     setError(undefined)
     setNotice(undefined)
-    void jsonRequest<{ sharedDeepSeek: SharedDeepSeekStatus }>('/auth/system/shared-deepseek', {
+    void jsonRequest<{ managedModels: ManagedModelsStatus }>('/auth/system/managed-models/deepseek-official', {
       method: 'PUT',
       body: JSON.stringify({ apiKey }),
-    }).then(({ sharedDeepSeek }) => {
-      updateSharedStatus(sharedDeepSeek)
+    }).then(({ managedModels }) => {
+      updateManagedStatus(managedModels)
       setApiKey('')
       setNotice(t('shared.savedNotice'))
     }).catch((reason: unknown) => {
@@ -527,12 +578,70 @@ function SystemSettingsView({ t }: { t: WebTranslate }) {
     setSaving(true)
     setError(undefined)
     setNotice(undefined)
-    void jsonRequest<{ sharedDeepSeek: SharedDeepSeekStatus }>('/auth/system/shared-deepseek', {
+    void jsonRequest<{ managedModels: ManagedModelsStatus }>('/auth/system/managed-models/deepseek-official', {
       method: 'DELETE',
-    }).then(({ sharedDeepSeek }) => {
-      updateSharedStatus(sharedDeepSeek)
+    }).then(({ managedModels }) => {
+      updateManagedStatus(managedModels)
       setApiKey('')
       setNotice(t('shared.removedNotice'))
+    }).catch((reason: unknown) => {
+      setError(reason instanceof Error ? reason.message : String(reason))
+    }).finally(() => { setSaving(false) })
+  }
+
+  const createManagedSite = (event: FormEvent): void => {
+    event.preventDefault()
+    const models = managedSiteModels(newSite.models)
+    if (newSite.name.trim().length === 0 || newSite.baseURL.trim().length === 0
+      || models.length === 0 || newSite.apiKey.trim().length === 0) return
+    setSaving(true)
+    setError(undefined)
+    setNotice(undefined)
+    void jsonRequest<{ managedModels: ManagedModelsStatus }>('/auth/system/managed-models/sites', {
+      method: 'POST',
+      body: JSON.stringify({ ...newSite, models }),
+    }).then(({ managedModels }) => {
+      updateManagedStatus(managedModels)
+      setNewSite(emptyManagedSiteDraft())
+      setNotice(t('shared.siteAddedNotice'))
+    }).catch((reason: unknown) => {
+      setError(reason instanceof Error ? reason.message : String(reason))
+    }).finally(() => { setSaving(false) })
+  }
+
+  const saveManagedSite = (id: string): void => {
+    const draft = siteDrafts[id]
+    if (draft === undefined) return
+    const models = managedSiteModels(draft.models)
+    if (draft.name.trim().length === 0 || draft.baseURL.trim().length === 0 || models.length === 0) return
+    setSaving(true)
+    setError(undefined)
+    setNotice(undefined)
+    void jsonRequest<{ managedModels: ManagedModelsStatus }>(`/auth/system/managed-models/sites/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        name: draft.name,
+        baseURL: draft.baseURL,
+        models,
+        ...draft.apiKey.trim().length === 0 ? {} : { apiKey: draft.apiKey },
+      }),
+    }).then(({ managedModels }) => {
+      updateManagedStatus(managedModels)
+      setNotice(t('shared.siteSavedNotice'))
+    }).catch((reason: unknown) => {
+      setError(reason instanceof Error ? reason.message : String(reason))
+    }).finally(() => { setSaving(false) })
+  }
+
+  const removeManagedSite = (id: string): void => {
+    setSaving(true)
+    setError(undefined)
+    setNotice(undefined)
+    void jsonRequest<{ managedModels: ManagedModelsStatus }>(`/auth/system/managed-models/sites/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }).then(({ managedModels }) => {
+      updateManagedStatus(managedModels)
+      setNotice(t('shared.siteRemovedNotice'))
     }).catch((reason: unknown) => {
       setError(reason instanceof Error ? reason.message : String(reason))
     }).finally(() => { setSaving(false) })
@@ -585,6 +694,9 @@ function SystemSettingsView({ t }: { t: WebTranslate }) {
     }).finally(() => { setOidcTesting(false) })
   }
 
+  const officialSite = settings?.managedModels.sites.find(site => site.kind === 'deepseek-official')
+  const customSites = settings?.managedModels.sites.filter(site => site.kind === 'openai-compatible') ?? []
+
   return (
     <main className={css.main}>
       <header className={css.pageHeader}>
@@ -599,42 +711,115 @@ function SystemSettingsView({ t }: { t: WebTranslate }) {
       {settings === undefined && loading && <div className={css.settingsLoading}>{t('system.loading')}</div>}
       {settings !== undefined && (
         <>
-          <section className={css.settingsSection} aria-labelledby="shared-deepseek-admin-title">
+          <section className={css.settingsSection} aria-labelledby="managed-models-admin-title">
             <div className={css.sectionHeading}>
-              <div><h2 id="shared-deepseek-admin-title">{t('shared.title')}</h2><p>{t('shared.description')}</p></div>
-              <span className={settings.sharedDeepSeek.configured ? css.stateReady : css.statePending}>
-                {settings.sharedDeepSeek.configured ? t('state.configured') : t('state.notConfigured')}
+              <div><h2 id="managed-models-admin-title">{t('shared.title')}</h2><p>{t('shared.description')}</p></div>
+              <span className={settings.managedModels.configured ? css.stateReady : css.statePending}>
+                {settings.managedModels.configured ? t('state.configured') : t('state.notConfigured')}
               </span>
             </div>
-            <div className={css.credentialPanel}>
-              <div className={css.credentialSummary}>
-                <div><span>{t('shared.fixedModel')}</span><strong>{settings.sharedDeepSeek.name}</strong></div>
-                <div><span>{t('shared.enabledUsers')}</span><strong>{settings.sharedDeepSeek.enabledUsers}</strong></div>
-                <div><span>{t('shared.writable')}</span><strong>{settings.sharedDeepSeek.writable ? t('action.yes') : t('action.no')}</strong></div>
-              </div>
-              <form className={css.credentialForm} onSubmit={saveSharedCredential}>
-                <label htmlFor="shared-deepseek-api-key">{settings.sharedDeepSeek.configured ? t('shared.replaceApiKey') : t('shared.setApiKey')}</label>
-                <div>
-                  <input
-                    id="shared-deepseek-api-key"
-                    type="password"
-                    autoComplete="off"
-                    value={apiKey}
-                    disabled={!settings.sharedDeepSeek.writable || saving}
-                    placeholder={settings.sharedDeepSeek.configured ? t('shared.replacePlaceholder') : t('shared.setPlaceholder')}
-                    onChange={(event) => { setApiKey(event.target.value) }}
-                  />
-                  <button className={css.primaryButton} type="submit" disabled={!settings.sharedDeepSeek.writable || saving || apiKey.trim().length === 0}>
-                    {saving ? t('action.saving') : settings.sharedDeepSeek.configured ? t('shared.replaceKey') : t('shared.saveKey')}
-                  </button>
-                  {settings.sharedDeepSeek.configured && (
-                    <button className={css.dangerButton} type="button" disabled={!settings.sharedDeepSeek.writable || saving} onClick={clearSharedCredential}>
-                      {t('shared.removeKey')}
-                    </button>
-                  )}
-                </div>
-              </form>
+            <div className={css.managedOverview}>
+              <div><span>{t('shared.siteCount')}</span><strong>{settings.managedModels.sites.length}</strong></div>
+              <div><span>{t('shared.enabledUsers')}</span><strong>{settings.managedModels.enabledUsers}</strong></div>
+              <div><span>{t('shared.configuredSites')}</span><strong>{settings.managedModels.sites.filter(site => site.configured).length}</strong></div>
             </div>
+
+            {officialSite !== undefined && (
+              <article className={css.managedSiteCard}>
+                <div className={css.managedSiteHeader}>
+                  <div>
+                    <span>{t('shared.officialSite')}</span>
+                    <h3>{officialSite.name}</h3>
+                    <code>{officialSite.baseURL}</code>
+                  </div>
+                  <span className={officialSite.configured ? css.stateReady : css.statePending}>
+                    {officialSite.configured ? t('state.configured') : t('state.notConfigured')}
+                  </span>
+                </div>
+                <div className={css.managedModelChips}>
+                  {officialSite.models.map(model => <code key={model.id}>{model.name}</code>)}
+                </div>
+                <form className={css.credentialForm} onSubmit={saveSharedCredential}>
+                  <label htmlFor="shared-deepseek-api-key">{officialSite.configured ? t('shared.replaceApiKey') : t('shared.setApiKey')}</label>
+                  <div>
+                    <input
+                      id="shared-deepseek-api-key"
+                      type="password"
+                      autoComplete="off"
+                      value={apiKey}
+                      disabled={!officialSite.writable || saving}
+                      placeholder={officialSite.configured ? t('shared.replacePlaceholder') : t('shared.setPlaceholder')}
+                      onChange={(event) => { setApiKey(event.target.value) }}
+                    />
+                    <button className={css.primaryButton} type="submit" disabled={!officialSite.writable || saving || apiKey.trim().length === 0}>
+                      {saving ? t('action.saving') : officialSite.configured ? t('shared.replaceKey') : t('shared.saveKey')}
+                    </button>
+                    {officialSite.configured && (
+                      <button className={css.dangerButton} type="button" disabled={!officialSite.writable || saving} onClick={clearSharedCredential}>
+                        {t('shared.removeKey')}
+                      </button>
+                    )}
+                  </div>
+                </form>
+              </article>
+            )}
+
+            <div className={css.managedSiteList}>
+              {customSites.map((site) => {
+                const draft = siteDrafts[site.id] ?? managedSiteDraft(site)
+                return (
+                  <article className={css.managedSiteCard} key={site.id}>
+                    <div className={css.managedSiteHeader}>
+                      <div><span>{t('shared.customSite')}</span><h3>{site.name}</h3><code>{site.provider}</code></div>
+                      <span className={site.configured ? css.stateReady : css.statePending}>
+                        {site.configured ? t('state.configured') : t('state.notConfigured')}
+                      </span>
+                    </div>
+                    <div className={css.managedSiteFormGrid}>
+                      <label>
+                        <span>{t('shared.siteName')}</span>
+                        <input aria-label={`${t('shared.siteName')} ${site.name}`} value={draft.name} disabled={saving} onChange={(event) => {
+                          setSiteDrafts({ ...siteDrafts, [site.id]: { ...draft, name: event.target.value } })
+                        }} />
+                      </label>
+                      <label>
+                        <span>{t('shared.baseUrl')}</span>
+                        <input type="url" aria-label={`${t('shared.baseUrl')} ${site.name}`} value={draft.baseURL} disabled={saving} onChange={(event) => {
+                          setSiteDrafts({ ...siteDrafts, [site.id]: { ...draft, baseURL: event.target.value } })
+                        }} />
+                      </label>
+                      <label>
+                        <span>{t('shared.modelIds')}</span>
+                        <textarea aria-label={`${t('shared.modelIds')} ${site.name}`} value={draft.models} disabled={saving} onChange={(event) => {
+                          setSiteDrafts({ ...siteDrafts, [site.id]: { ...draft, models: event.target.value } })
+                        }} />
+                      </label>
+                      <label>
+                        <span>{t('shared.replaceApiKey')}</span>
+                        <input type="password" autoComplete="off" aria-label={`${t('shared.replaceApiKey')} ${site.name}`} value={draft.apiKey} disabled={saving} placeholder={t('shared.keepKeyPlaceholder')} onChange={(event) => {
+                          setSiteDrafts({ ...siteDrafts, [site.id]: { ...draft, apiKey: event.target.value } })
+                        }} />
+                      </label>
+                    </div>
+                    <div className={css.managedSiteActions}>
+                      <button className={css.dangerButton} type="button" disabled={saving} onClick={() => { removeManagedSite(site.id) }}>{t('shared.removeSite')}</button>
+                      <button className={css.primaryButton} type="button" disabled={saving || managedSiteModels(draft.models).length === 0} onClick={() => { saveManagedSite(site.id) }}>{t('shared.saveSite')}</button>
+                    </div>
+                  </article>
+                )
+              })}
+            </div>
+
+            <form className={css.addManagedSite} onSubmit={createManagedSite}>
+              <div><h3>{t('shared.addSite')}</h3><p>{t('shared.addSiteHelp')}</p></div>
+              <div className={css.managedSiteFormGrid}>
+                <label><span>{t('shared.siteName')}</span><input required value={newSite.name} disabled={saving} placeholder={t('shared.siteNamePlaceholder')} onChange={(event) => { setNewSite({ ...newSite, name: event.target.value }) }} /></label>
+                <label><span>{t('shared.baseUrl')}</span><input required type="url" value={newSite.baseURL} disabled={saving} placeholder={t('shared.baseUrlPlaceholder')} onChange={(event) => { setNewSite({ ...newSite, baseURL: event.target.value }) }} /></label>
+                <label><span>{t('shared.modelIds')}</span><textarea required value={newSite.models} disabled={saving} placeholder={t('shared.modelIdsPlaceholder')} onChange={(event) => { setNewSite({ ...newSite, models: event.target.value }) }} /></label>
+                <label><span>{t('shared.setApiKey')}</span><input required type="password" autoComplete="off" value={newSite.apiKey} disabled={saving} placeholder={t('shared.customKeyPlaceholder')} onChange={(event) => { setNewSite({ ...newSite, apiKey: event.target.value }) }} /></label>
+              </div>
+              <div className={css.managedSiteActions}><button className={css.primaryButton} type="submit" disabled={saving || managedSiteModels(newSite.models).length === 0}>{saving ? t('action.saving') : t('shared.addSiteAction')}</button></div>
+            </form>
           </section>
 
           <section className={css.settingsSection} aria-labelledby="oidc-settings-title">

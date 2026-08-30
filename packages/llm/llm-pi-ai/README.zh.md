@@ -35,6 +35,8 @@ kind: "package-reference"
 
 每个 profile 都可以设置 `retryPolicy`；省略时使用 normal mode、最多重试五次。`apiKeyEnv` 是按请求经 harness 凭据 seam 解析的凭据引用，因此配置文件绝不包含密钥；解析为空的引用会让请求以 `MISSING_CREDENTIAL` 失败。省略它会让路由保持已配置但无密钥（configured-but-keyless）状态，对已安装目录路由而言即交由 pi-ai 提供方原生的环境发现。
 
+Web 管理员 API 为自定义统一站点保留 `managed-<site id>` profile 与 `HARNESS_SHARED_MODEL_<SITE ID>_API_KEY` 引用。使用这类引用的实际模型请求会解析会话项目的所有者，并且只在该所有者启用统一模型偏好后读取凭据。发现与管理操作无需会话即可描述路由，但不能用该 Key 生成内容。其他 `apiKeyEnv` 引用仍保持普通的部署级行为。
+
 ```yaml
 - name: '@deepseek-ai/dsh-llm-pi-ai'
   config:

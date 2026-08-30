@@ -53,16 +53,16 @@ The administrator saves these non-secret fields through `PUT /auth/system/oidc`.
 
 The Web deployment stores `(issuer, sub) → UserId` in `<DSH_HOME>/system/auth/oidc.json`. That immutable pair is the only automatic account-link key. A preferred username collision creates a suffixed OIDC username instead of linking or overwriting the local account. The configured administrator group selects the role only when a new OIDC identity is created; later role changes remain under Harness administrator control.
 
-## Shared DeepSeek credential choice
+## Administrator-managed model credential choice
 
 ```ts type-equiv
-/** User-owned choice to consume the administrator-managed DeepSeek credential. */
+/** User-owned choice to consume administrator-managed model credentials. */
 interface SharedDeepSeekPreference {
   enabled: boolean
 }
 ```
 
-The Web deployment persists this choice as user-id metadata in `<DSH_HOME>/system/auth/preferences.json`; it never stores the key there. The administrator-managed key remains in the ordinary credentials provider under `HARNESS_SHARED_DEEPSEEK_API_KEY`. The DeepSeek adapter uses it only for `deepseek-official` / `deepseek-v4-flash` calls whose live session path belongs to an active opted-in user; every other call follows the configured `apiKeyEnv` path.
+The Web deployment persists this choice as user-id metadata in `<DSH_HOME>/system/auth/preferences.json`; it never stores a key there. The DeepSeek official key remains in the ordinary credentials provider under `HARNESS_SHARED_DEEPSEEK_API_KEY`, and each custom site has a separate `HARNESS_SHARED_MODEL_<SITE ID>_API_KEY` reference. The DeepSeek adapter applies the choice to `deepseek-official` / `deepseek-v4-flash`. The pi-ai adapter applies it to reserved `managed-<site id>` routes after resolving the live Session's project owner; ordinary provider profiles retain their configured `apiKeyEnv` behavior.
 
 ## Browser sessions
 
@@ -245,16 +245,16 @@ abstract updateUser(userId: UserId, input: UpdateUserInput): Promise<AuthUser>
 abstract resetLocalPassword(userId: UserId, password: string): Promise<void>
 
 /**
- * Read whether one user opted into the administrator-managed DeepSeek credential.
+ * Read whether one user opted into administrator-managed model credentials.
  * @param userId - stable user identity whose preference is requested.
  * @returns the detached preference; absent stored state resolves to disabled.
  */
 abstract sharedDeepSeekPreference(userId: UserId): SharedDeepSeekPreference
 
 /**
- * Persist one user's choice to consume the administrator-managed DeepSeek credential.
+ * Persist one user's choice to consume administrator-managed model credentials.
  * @param userId - stable user identity whose preference changes.
- * @param enabled - whether matching DeepSeek V4 Flash requests may use the managed credential.
+ * @param enabled - whether matching model requests may use managed credentials.
  */
 abstract setSharedDeepSeekPreference(userId: UserId, enabled: boolean): Promise<void>
 

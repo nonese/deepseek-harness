@@ -55,16 +55,49 @@ describe('HarnessPortal administrator navigation', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
       if (path === '/auth/projects') return jsonResponse({ projects: [] })
-      if (path === '/auth/system/shared-deepseek') {
+      if (path === '/auth/system/managed-models/deepseek-official') {
         expect(init?.method).toBe('PUT')
         expect(typeof init?.body).toBe('string')
         expect(JSON.parse(init?.body as string)).toEqual({ apiKey: 'sk-browser-test-secret' })
         return jsonResponse({
-          sharedDeepSeek: {
-            provider: 'deepseek-official', model: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash',
-            configured: true, writable: true,
+          managedModels: {
+            configured: true,
+            sites: [{
+              id: 'deepseek-official', kind: 'deepseek-official', provider: 'deepseek-official',
+              name: 'DeepSeek', baseURL: 'https://api.deepseek.com',
+              models: [{ id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash' }],
+              configured: true, writable: true,
+            }],
           },
         })
+      }
+      if (path === '/auth/system/managed-models/sites') {
+        expect(init?.method).toBe('POST')
+        expect(JSON.parse(init?.body as string)).toEqual({
+          name: '校内 New API',
+          baseURL: 'https://new-api.example.test/v1',
+          models: ['deepseek-chat', 'gpt-4.1-mini'],
+          apiKey: 'sk-custom-browser-secret',
+        })
+        return jsonResponse({
+          managedModels: {
+            configured: true,
+            sites: [
+              {
+                id: 'deepseek-official', kind: 'deepseek-official', provider: 'deepseek-official',
+                name: 'DeepSeek', baseURL: 'https://api.deepseek.com',
+                models: [{ id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash' }],
+                configured: true, writable: true,
+              },
+              {
+                id: 'a1b2c3d4e5f6', kind: 'openai-compatible', provider: 'managed-a1b2c3d4e5f6',
+                name: '校内 New API', baseURL: 'https://new-api.example.test/v1',
+                models: [{ id: 'deepseek-chat', name: 'deepseek-chat' }, { id: 'gpt-4.1-mini', name: 'gpt-4.1-mini' }],
+                configured: true, writable: true,
+              },
+            ],
+          },
+        }, 201)
       }
       if (path === '/auth/system/oidc') {
         expect(init?.method).toBe('PUT')
@@ -109,9 +142,15 @@ describe('HarnessPortal administrator navigation', () => {
             projectsManaged: true,
             administratorContentAccess: false,
           },
-          sharedDeepSeek: {
-            provider: 'deepseek-official', model: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash',
-            configured: false, writable: true, enabledUsers: 0,
+          managedModels: {
+            configured: false,
+            sites: [{
+              id: 'deepseek-official', kind: 'deepseek-official', provider: 'deepseek-official',
+              name: 'DeepSeek', baseURL: 'https://api.deepseek.com',
+              models: [{ id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash' }],
+              configured: false, writable: true,
+            }],
+            enabledUsers: 0,
           },
           limits: { maxBodyBytes: 64 * 1024 },
         })
@@ -120,7 +159,7 @@ describe('HarnessPortal administrator navigation', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    const { getByLabelText, getByRole, getByText, renderRuntime } = mount(admin)
+    const { getByLabelText, getByPlaceholderText, getByRole, getByText, renderRuntime } = mount(admin)
     fireEvent.click(getByRole('button', { name: '系统设置' }))
 
     await waitFor(() => { expect(getByRole('heading', { name: '系统设置' })).toBeTruthy() })
@@ -135,12 +174,20 @@ describe('HarnessPortal administrator navigation', () => {
     expect(renderRuntime).not.toHaveBeenCalled()
     expect(fetchMock).toHaveBeenCalledWith('/auth/system', expect.anything())
 
-    fireEvent.change(getByLabelText('设置 API Key'), { target: { value: 'sk-browser-test-secret' } })
+    fireEvent.change(getByPlaceholderText('输入 DeepSeek API Key'), { target: { value: 'sk-browser-test-secret' } })
     fireEvent.click(getByRole('button', { name: '保存 Key' }))
     await waitFor(() => {
-      expect(getByText('统一 DeepSeek API Key 已保存。用户需要在“设置”中主动启用，才会在 DeepSeek-V4-Flash 请求中使用。')).toBeTruthy()
+      expect(getByText('DeepSeek 官方站点 API Key 已保存。用户需要在“设置”中主动启用后才能使用。')).toBeTruthy()
     })
     expect(getByLabelText('替换 API Key')).toHaveProperty('value', '')
+
+    fireEvent.change(getByPlaceholderText('例如：校内 New API'), { target: { value: '校内 New API' } })
+    fireEvent.change(getByPlaceholderText('例如：https://new-api.example.com/v1'), { target: { value: 'https://new-api.example.test/v1' } })
+    fireEvent.change(getByPlaceholderText('每行一个，例如：deepseek-chat'), { target: { value: 'deepseek-chat\ngpt-4.1-mini' } })
+    fireEvent.change(getByPlaceholderText('输入该站点的 API Key'), { target: { value: 'sk-custom-browser-secret' } })
+    fireEvent.click(getByRole('button', { name: '添加站点' }))
+    await waitFor(() => { expect(getByText('自定义统一模型站点已添加。')).toBeTruthy() })
+    expect(getByText('校内 New API')).toBeTruthy()
 
     fireEvent.change(getByLabelText('Issuer URL'), { target: { value: 'http://identity.internal/api/oidc' } })
     fireEvent.change(getByLabelText('Client ID'), { target: { value: 'harness-browser-test' } })
@@ -335,19 +382,29 @@ describe('HarnessPortal administrator navigation', () => {
       if (path === '/auth/projects') return jsonResponse({ projects: [] })
       if (path === '/auth/preferences' && init?.method === 'PATCH') {
         expect(typeof init.body).toBe('string')
-        expect(JSON.parse(init.body as string)).toEqual({ sharedDeepSeekEnabled: true })
+        expect(JSON.parse(init.body as string)).toEqual({ managedModelsEnabled: true })
         return jsonResponse({
-          sharedDeepSeek: {
-            provider: 'deepseek-official', model: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash',
-            configured: true, writable: true, enabled: true,
+          managedModels: {
+            configured: true, enabled: true,
+            sites: [{
+              id: 'deepseek-official', kind: 'deepseek-official', provider: 'deepseek-official',
+              name: 'DeepSeek', baseURL: 'https://api.deepseek.com',
+              models: [{ id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash' }],
+              configured: true, writable: true,
+            }],
           },
         })
       }
       if (path === '/auth/preferences') {
         return jsonResponse({
-          sharedDeepSeek: {
-            provider: 'deepseek-official', model: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash',
-            configured: true, writable: true, enabled: false,
+          managedModels: {
+            configured: true, enabled: false,
+            sites: [{
+              id: 'deepseek-official', kind: 'deepseek-official', provider: 'deepseek-official',
+              name: 'DeepSeek', baseURL: 'https://api.deepseek.com',
+              models: [{ id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash' }],
+              configured: true, writable: true,
+            }],
           },
         })
       }
@@ -362,7 +419,7 @@ describe('HarnessPortal administrator navigation', () => {
     expect(getByText('管理员已配置')).toBeTruthy()
     expect(renderRuntime).not.toHaveBeenCalled()
     fireEvent.click(getByLabelText('未启用'))
-    await waitFor(() => { expect(getByText('已启用统一 DeepSeek-V4-Flash。')).toBeTruthy() })
+    await waitFor(() => { expect(getByText('已启用管理员提供的统一模型站点。')).toBeTruthy() })
     expect(getByLabelText('已启用')).toHaveProperty('checked', true)
   })
 })

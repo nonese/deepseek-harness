@@ -24,6 +24,9 @@
       "path": "../../llm/llm"
     },
     {
+      "path": "../../identity/auth"
+    },
+    {
       "path": "../../attachment/attachment"
     },
     {
@@ -37,6 +40,9 @@
     },
     {
       "path": "../../settings/settings"
+    },
+    {
+      "path": "../../core/session"
     },
     {
       "path": "../../runtime-diagnostics/invariants"

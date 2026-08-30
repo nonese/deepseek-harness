@@ -53,16 +53,16 @@ interface OidcClientConfig {
 
 Web 部署把 `(issuer, sub) → UserId` 保存在 `<DSH_HOME>/system/auth/oidc.json`。这个不可变二元组是唯一的自动账号关联键。首选用户名冲突时会创建带后缀的 OIDC 用户名，而不会关联或覆盖本地账号。配置的管理员组只在新 OIDC 身份创建时选择角色；后续角色变更仍由 Harness 管理员控制。
 
-## 统一 DeepSeek 凭据选择
+## 管理员统一模型凭据选择
 
 ```ts type-equiv
-/** User-owned choice to consume the administrator-managed DeepSeek credential. */
+/** User-owned choice to consume administrator-managed model credentials. */
 interface SharedDeepSeekPreference {
   enabled: boolean
 }
 ```
 
-Web 部署会把该选择作为用户 id 元数据持久化到 `<DSH_HOME>/system/auth/preferences.json`，但绝不在此保存 Key。管理员统一 Key 仍由普通 credentials 提供方保存在 `HARNESS_SHARED_DEEPSEEK_API_KEY` 下。DeepSeek 适配器只会为实时会话路径属于活动且已启用用户的 `deepseek-official` / `deepseek-v4-flash` 调用使用该 Key；其他调用继续使用已配置的 `apiKeyEnv` 路径。
+Web 部署会把该选择作为用户 id 元数据持久化到 `<DSH_HOME>/system/auth/preferences.json`，但绝不在此保存 Key。DeepSeek 官方 Key 仍由普通 credentials 提供方保存在 `HARNESS_SHARED_DEEPSEEK_API_KEY` 下，每个自定义站点则使用独立的 `HARNESS_SHARED_MODEL_<SITE ID>_API_KEY` 引用。DeepSeek 适配器把该选择用于 `deepseek-official` / `deepseek-v4-flash`。pi-ai 适配器会先解析实时 Session 的项目所有者，再把该选择用于保留的 `managed-<site id>` 路由；普通提供方 profile 继续保持已配置的 `apiKeyEnv` 行为。
 
 ## 浏览器会话
 
@@ -245,16 +245,16 @@ abstract updateUser(userId: UserId, input: UpdateUserInput): Promise<AuthUser>
 abstract resetLocalPassword(userId: UserId, password: string): Promise<void>
 
 /**
- * Read whether one user opted into the administrator-managed DeepSeek credential.
+ * Read whether one user opted into administrator-managed model credentials.
  * @param userId - stable user identity whose preference is requested.
  * @returns the detached preference; absent stored state resolves to disabled.
  */
 abstract sharedDeepSeekPreference(userId: UserId): SharedDeepSeekPreference
 
 /**
- * Persist one user's choice to consume the administrator-managed DeepSeek credential.
+ * Persist one user's choice to consume administrator-managed model credentials.
  * @param userId - stable user identity whose preference changes.
- * @param enabled - whether matching DeepSeek V4 Flash requests may use the managed credential.
+ * @param enabled - whether matching model requests may use managed credentials.
  */
 abstract setSharedDeepSeekPreference(userId: UserId, enabled: boolean): Promise<void>
 

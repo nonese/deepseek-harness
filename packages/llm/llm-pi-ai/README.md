@@ -35,6 +35,8 @@ Choose this adapter when the same composition serves several providers, when a r
 
 Each profile may set a `retryPolicy`; omission uses normal mode with five retries. `apiKeyEnv` is a credential reference resolved per request through the harness credential seam, so no secret enters the configuration file; a reference that resolves to nothing fails the request with `MISSING_CREDENTIAL`. Omitting it leaves the route configured-but-keyless, which for an installed catalog route defers to pi-ai's provider-native ambient discovery.
 
+The Web administrator API reserves `managed-<site id>` profiles and `HARNESS_SHARED_MODEL_<SITE ID>_API_KEY` references for custom shared sites. A real model request using one of these references resolves the session's project owner and requires that owner's managed-model preference to be enabled before reading the credential. Discovery and administration can describe the route without a session, but cannot use its key for generation. Other `apiKeyEnv` references retain their normal deployment-wide behavior.
+
 ```yaml
 - name: '@deepseek-ai/dsh-llm-pi-ai'
   config:
