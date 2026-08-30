@@ -65,6 +65,8 @@ export interface Config {
   projectFileMaxEntries?: number
   /** Maximum UTF-8 file preview size. Defaults to 512 KiB. */
   projectFilePreviewMaxBytes?: number
+  /** Treat HTTP 201 from an authorization-code token endpoint as HTTP 200. Defaults to false. */
+  oidcTokenEndpointCreatedCompatibility?: boolean
 }
 
 const DEFAULT_COOKIE_NAME = 'harness_session'
@@ -84,6 +86,7 @@ export const Config: z<Config> = z.object({
   projectFileMaxEntries: z.natural().min(1).max(10_000).default(DEFAULT_PROJECT_FILE_MAX_ENTRIES),
   projectFilePreviewMaxBytes: z.natural().min(1024).max(10 * 1024 * 1024)
     .default(DEFAULT_PROJECT_FILE_PREVIEW_MAX_BYTES),
+  oidcTokenEndpointCreatedCompatibility: z.boolean().default(false),
 })
 
 interface JsonObject {
@@ -306,6 +309,19 @@ function oidcClientAuthentication(method: OidcClientAuthMethod, secret: string |
   return oidc.None()
 }
 
+function normalizeOidcTokenEndpointCreatedResponse(options: oidc.CustomFetchOptions, response: Response): Response {
+  if (response.status !== 201
+    || !(options.body instanceof URLSearchParams)
+    || options.body.get('grant_type') !== 'authorization_code') {
+    return response
+  }
+  return new Response(response.body, {
+    status: 200,
+    statusText: 'OK',
+    headers: response.headers,
+  })
+}
+
 function oidcFingerprint(settings: OidcClientConfig, secret: string | undefined): string {
   return createHash('sha256')
     .update(JSON.stringify(settings))
@@ -348,7 +364,11 @@ async function resolveOidcInputs(ctx: Context, requireEnabled: boolean): Promise
   }
 }
 
-async function discoverOidcClient(ctx: Context, requireEnabled: boolean): Promise<{
+async function discoverOidcClient(
+  ctx: Context,
+  requireEnabled: boolean,
+  tokenEndpointCreatedCompatibility: boolean,
+): Promise<{
   settings: OidcClientConfig
   secret?: string
   fingerprint: string
@@ -368,6 +388,13 @@ async function discoverOidcClient(ctx: Context, requireEnabled: boolean): Promis
     oidcClientAuthentication(inputs.settings.clientAuthMethod, inputs.secret),
     inputs.settings.allowInsecureIssuer ? { execute: [allowInsecureRequests] } : undefined,
   )
+  if (tokenEndpointCreatedCompatibility) {
+    const defaultFetch = fetch as oidc.CustomFetch
+    client[oidc.customFetch] = async (...args) => normalizeOidcTokenEndpointCreatedResponse(
+      args[1],
+      await defaultFetch(...args),
+    )
+  }
   return { ...inputs, client }
 }
 
@@ -606,6 +633,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   const maxBodyBytes = config.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
   const projectFileMaxEntries = config.projectFileMaxEntries ?? DEFAULT_PROJECT_FILE_MAX_ENTRIES
   const projectFilePreviewMaxBytes = config.projectFilePreviewMaxBytes ?? DEFAULT_PROJECT_FILE_PREVIEW_MAX_BYTES
+  const tokenEndpointCreatedCompatibility = config.oidcTokenEndpointCreatedCompatibility ?? false
   const pendingOidcFlows = new Map<string, PendingOidcFlow>()
 
   ctx.connection.registerAuthenticator({
@@ -693,7 +721,7 @@ export function apply(ctx: Context, config: Config = {}): void {
               sendRedirect(res, oidcFailureLocation(settings, 'busy'))
               return
             }
-            const runtime = await discoverOidcClient(ctx, true)
+            const runtime = await discoverOidcClient(ctx, true, tokenEndpointCreatedCompatibility)
             const state = oidc.randomState()
             const nonce = oidc.randomNonce()
             const codeVerifier = oidc.randomPKCECodeVerifier()
@@ -910,7 +938,7 @@ export function apply(ctx: Context, config: Config = {}): void {
 
         if (pathname === '/auth/system/oidc/test' && req.method === 'POST') {
           requireAdmin(principal)
-          const runtime = await discoverOidcClient(ctx, false)
+          const runtime = await discoverOidcClient(ctx, false, tokenEndpointCreatedCompatibility)
           const metadata = runtime.client.serverMetadata()
           sendJson(res, 200, {
             oidc: {

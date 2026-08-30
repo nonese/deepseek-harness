@@ -911,6 +911,8 @@ export interface Config {
   projectFileMaxEntries?: number
   /** Maximum UTF-8 file preview size. Defaults to 512 KiB. */
   projectFilePreviewMaxBytes?: number
+  /** Treat HTTP 201 from an authorization-code token endpoint as HTTP 200. Defaults to false. */
+  oidcTokenEndpointCreatedCompatibility?: boolean
 }
 ```
 

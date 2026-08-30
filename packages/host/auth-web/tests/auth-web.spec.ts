@@ -34,9 +34,9 @@ afterEach(async () => {
   vi.unstubAllEnvs()
 })
 
-function json(res: import('node:http').ServerResponse, value: unknown): void {
+function json(res: import('node:http').ServerResponse, value: unknown, status = 200): void {
   const body = JSON.stringify(value)
-  res.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) })
+  res.writeHead(status, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) })
   res.end(body)
 }
 
@@ -47,7 +47,9 @@ function encodeJson(value: unknown): string {
 async function startOidcProvider(): Promise<{
   issuer: string
   captureAuthorization(url: URL): void
+  setClientAuthMethod(method: 'client_secret_basic' | 'client_secret_post'): void
   setClaims(claims: Readonly<Record<string, unknown>>): void
+  setTokenSuccessStatus(status: number): void
   setSupportsPkce(value: boolean | undefined): void
 }> {
   const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
@@ -56,6 +58,8 @@ async function startOidcProvider(): Promise<{
   let expectedNonce = ''
   let expectedChallenge = ''
   let supportsPkce: boolean | undefined = true
+  let tokenSuccessStatus = 200
+  let clientAuthMethod: 'client_secret_basic' | 'client_secret_post' = 'client_secret_basic'
   let customClaims: Readonly<Record<string, unknown>> = {
     sub: 'oidc-user-1',
     preferred_username: 'external.user',
@@ -101,8 +105,11 @@ async function startOidcProvider(): Promise<{
         'base64',
       ).toString()
       const credentials = encodedCredentials.split(':').map(part => decodeURIComponent(part)).join(':')
+      const clientAuthenticated = clientAuthMethod === 'client_secret_basic'
+        ? credentials === 'harness-client:harness-secret'
+        : body.get('client_id') === 'harness-client' && body.get('client_secret') === 'harness-secret'
       if (body.get('code') !== 'valid-code' || challenge !== expectedChallenge
-        || credentials !== 'harness-client:harness-secret') {
+        || !clientAuthenticated) {
         const failure = JSON.stringify({
           error: 'invalid_grant',
           error_description: JSON.stringify({
@@ -132,7 +139,7 @@ async function startOidcProvider(): Promise<{
         expires_in: 3600,
         scope: 'openid profile email groups',
         id_token: `${signingInput}.${signature}`,
-      })
+      }, tokenSuccessStatus)
       return
     }
     res.writeHead(404)
@@ -154,8 +161,14 @@ async function startOidcProvider(): Promise<{
       expectedNonce = url.searchParams.get('nonce') ?? ''
       expectedChallenge = url.searchParams.get('code_challenge') ?? ''
     },
+    setClientAuthMethod(method) {
+      clientAuthMethod = method
+    },
     setClaims(claims) {
       customClaims = claims
+    },
+    setTokenSuccessStatus(status) {
+      tokenSuccessStatus = status
     },
     setSupportsPkce(value) {
       supportsPkce = value
@@ -168,6 +181,7 @@ interface BootOptions {
   readonly maxBodyBytes?: number
   readonly projectFileMaxEntries?: number
   readonly projectFilePreviewMaxBytes?: number
+  readonly oidcTokenEndpointCreatedCompatibility?: boolean
 }
 
 interface BootResult {
@@ -202,6 +216,7 @@ async function boot(options: BootOptions = {}): Promise<BootResult> {
     `    maxBodyBytes: ${String(options.maxBodyBytes ?? 64 * 1024)}`,
     `    projectFileMaxEntries: ${String(options.projectFileMaxEntries ?? 1_000)}`,
     `    projectFilePreviewMaxBytes: ${String(options.projectFilePreviewMaxBytes ?? 512 * 1024)}`,
+    `    oidcTokenEndpointCreatedCompatibility: ${String(options.oidcTokenEndpointCreatedCompatibility ?? false)}`,
     '',
   ].join('\n'))
 
@@ -577,8 +592,10 @@ describe('real authentication route composition', () => {
   })
 
   it('completes PKCE OIDC login, keeps the client secret server-side, and creates an ordinary isolated user', { timeout: 60_000 }, async () => {
-    const { context, origin } = await boot()
+    const { context, origin } = await boot({ oidcTokenEndpointCreatedCompatibility: true })
     const provider = await startOidcProvider()
+    provider.setClientAuthMethod('client_secret_post')
+    provider.setTokenSuccessStatus(201)
     const login = await fetch(`${origin}/auth/login/local`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', origin },
@@ -597,7 +614,7 @@ describe('real authentication route composition', () => {
         clientSecret: 'harness-secret',
         redirectUri: `${origin}/auth/oidc/callback`,
         scopes: ['openid', 'profile', 'email', 'groups'],
-        clientAuthMethod: 'client_secret_basic',
+        clientAuthMethod: 'client_secret_post',
         allowInsecureIssuer: true,
         administratorGroup: 'super_admin',
       }),
@@ -662,6 +679,19 @@ describe('real authentication route composition', () => {
     })
     expect(context.auth.listUsers()).toHaveLength(2)
     expect((await fetch(`${origin}/auth/system`, { headers: { cookie: oidcSessionCookie } })).status).toBe(403)
+
+    provider.setTokenSuccessStatus(202)
+    const unsupportedStart = await fetch(`${origin}/auth/oidc/start`, { redirect: 'manual' })
+    const unsupportedAuthorization = new URL(unsupportedStart.headers.get('location') as string)
+    provider.captureAuthorization(unsupportedAuthorization)
+    const unsupportedState = unsupportedAuthorization.searchParams.get('state')
+    const unsupportedCookie = unsupportedStart.headers.get('set-cookie')?.split(';', 1)[0]
+    if (unsupportedState === null || unsupportedCookie === undefined) throw new Error('second OIDC flow state missing')
+    const unsupportedCallback = await fetch(
+      `${origin}/auth/oidc/callback?code=valid-code&state=${encodeURIComponent(unsupportedState)}`,
+      { headers: { cookie: unsupportedCookie }, redirect: 'manual' },
+    )
+    expect(unsupportedCallback.headers.get('location')).toBe(`${origin}/?oidc_error=login_failed`)
 
     const replay = await fetch(`${origin}/auth/oidc/callback?code=valid-code&state=${encodeURIComponent(state)}`, {
       headers: { cookie: flowCookie },
