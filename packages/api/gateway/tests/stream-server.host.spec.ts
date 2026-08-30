@@ -1,5 +1,7 @@
 import { once } from 'node:events'
-import { createServer, type Server } from 'node:http'
+import { AsyncLocalStorage } from 'node:async_hooks'
+import { createServer, type IncomingMessage, type Server } from 'node:http'
+import type { ConnectionRequestAuthorization } from '@deepseek-ai/dsh-client-connection'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import WebSocket from 'ws'
 import {
@@ -25,6 +27,51 @@ afterEach(async () => {
 })
 
 describe('Remote stream mux server carrier lifecycle', () => {
+  it('preserves the authenticated execution context for every logical stream', async () => {
+    const principals = new AsyncLocalStorage<string>()
+    const observed: string[] = []
+    const gates = new Map<string, () => void>()
+    const entry = await startMux(async (_endpoint, payload, signal) => {
+      const label: unknown = typeof payload === 'object' && payload !== null
+        ? Reflect.get(payload, 'label')
+        : undefined
+      if (typeof label !== 'string') throw new Error('fixture stream label is required')
+      observed.push(`${label}:open:${principals.getStore() ?? 'missing'}`)
+      const released = new Promise<void>((resolve) => { gates.set(label, resolve) })
+      return contextualStream(label, released, signal, principals, observed)
+    }, 30_000, (request) => {
+      const principal = request.headers['x-fixture-principal']
+      if (typeof principal !== 'string') throw new Error('fixture principal header is required')
+      return { run: operation => principals.run(principal, operation) }
+    })
+    const alice = await connect(entry.url, { 'x-fixture-principal': 'alice' })
+    const bob = await connect(entry.url, { 'x-fixture-principal': 'bob' })
+
+    alice.send(openFrame('alice-one', { label: 'alice' }))
+    bob.send(openFrame('bob-one', { label: 'bob' }))
+    await vi.waitFor(() => {
+      expect(observed).toEqual(expect.arrayContaining([
+        'alice:open:alice',
+        'alice:iterate:alice',
+        'bob:open:bob',
+        'bob:iterate:bob',
+      ]))
+    })
+    alice.send(JSON.stringify({ type: 'cancel', streamId: 'alice-one' }))
+    gates.get('bob')?.()
+    await vi.waitFor(() => {
+      expect(observed).toEqual(expect.arrayContaining([
+        'alice:return:alice',
+        'bob:yield:bob',
+        'bob:return:bob',
+      ]))
+    })
+
+    alice.close()
+    bob.close()
+    await Promise.all([once(alice, 'close'), once(bob, 'close')])
+  })
+
   it('sends WebSocket Ping control frames without application messages', async () => {
     const entry = await startMux(async (_endpoint, _payload, signal) => waitForAbort(signal), 20)
     const client = await connect(entry.url)
@@ -193,10 +240,18 @@ const mapFailure: RemoteStreamFailureMapper = error => ({
   details: {},
 })
 
-async function startMux(open: RemoteStreamOpener, heartbeatIntervalMs = 30_000): Promise<RunningMux> {
+async function startMux(
+  open: RemoteStreamOpener,
+  heartbeatIntervalMs = 30_000,
+  authorize: (request: IncomingMessage) => ConnectionRequestAuthorization = () => ({
+    run: operation => operation(),
+  }),
+): Promise<RunningMux> {
   const mux = new RemoteStreamMuxServer(open, mapFailure, heartbeatIntervalMs)
   const http = createServer()
-  http.on('upgrade', (request, socket, head) => { mux.handleUpgrade(request, socket, head) })
+  http.on('upgrade', (request, socket, head) => {
+    mux.handleUpgrade(request, socket, head, authorize(request))
+  })
   await new Promise<void>((resolve, reject) => {
     http.once('error', reject)
     http.listen(0, '127.0.0.1', () => {
@@ -211,8 +266,8 @@ async function startMux(open: RemoteStreamOpener, heartbeatIntervalMs = 30_000):
   return entry
 }
 
-async function connect(url: string): Promise<WebSocket> {
-  const socket = new WebSocket(url)
+async function connect(url: string, headers?: Readonly<Record<string, string>>): Promise<WebSocket> {
+  const socket = new WebSocket(url, { headers })
   await once(socket, 'open')
   return socket
 }
@@ -224,8 +279,32 @@ function acceptedSocket(mux: RemoteStreamMuxServer): WebSocket {
   return socket
 }
 
-function openFrame(streamId: string): string {
-  return JSON.stringify({ type: 'open', streamId, endpoint: 'fixture/follow', payload: {} })
+function openFrame(streamId: string, payload: object = {}): string {
+  return JSON.stringify({ type: 'open', streamId, endpoint: 'fixture/follow', payload })
+}
+
+async function *contextualStream(
+  label: string,
+  released: Promise<void>,
+  signal: AbortSignal,
+  principals: AsyncLocalStorage<string>,
+  observed: string[],
+): AsyncIterable<string> {
+  observed.push(`${label}:iterate:${principals.getStore() ?? 'missing'}`)
+  try {
+    await Promise.race([
+      released,
+      new Promise<void>((resolve) => {
+        if (signal.aborted) resolve()
+        else signal.addEventListener('abort', () => { resolve() }, { once: true })
+      }),
+    ])
+    if (signal.aborted) return
+    observed.push(`${label}:yield:${principals.getStore() ?? 'missing'}`)
+    yield 'ready'
+  } finally {
+    observed.push(`${label}:return:${principals.getStore() ?? 'missing'}`)
+  }
 }
 
 async function *waitForAbort(signal: AbortSignal): AsyncIterable<never> {

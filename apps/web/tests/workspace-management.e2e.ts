@@ -1,6 +1,6 @@
 /** Browser acceptance for server-managed per-user projects. */
 
-import { mkdir, realpath, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Browser, Page } from 'playwright'
@@ -92,7 +92,7 @@ describe('web e2e: server-managed project lifecycle', () => {
     await page.keyboard.press('Escape')
   })
 
-  it('browses and previews files from the selected managed project', async () => {
+  it('browses, previews, uploads, and downloads files from the selected managed project', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-managed-project-files'))
     await page.getByRole('button', { name: 'Back to my projects', exact: true }).click()
     const response = await scaffold.hostFetch('/auth/projects')
@@ -125,6 +125,22 @@ describe('web e2e: server-managed project lifecycle', () => {
       await captureStableAria(page, '[role="dialog"]', scaffold.workspaceCwd),
       MODE,
     )
+
+    const uploadContent = Buffer.from('Teacher-owned lesson plan\n')
+    await dialog.locator('input[type="file"]').setInputFiles({
+      name: 'lesson-plan.txt',
+      mimeType: 'text/plain',
+      buffer: uploadContent,
+    })
+    await dialog.getByText('Uploaded 1 file(s).', { exact: true }).waitFor()
+    await dialog.getByText('lesson-plan.txt', { exact: true }).waitFor()
+    const downloadStarted = page.waitForEvent('download')
+    await dialog.getByRole('link', { name: 'Download lesson-plan.txt', exact: true }).click()
+    const download = await downloadStarted
+    expect(download.suggestedFilename()).toBe('lesson-plan.txt')
+    const downloadedPath = await download.path()
+    if (downloadedPath === null) throw new Error('browser download did not produce a local file')
+    expect(await readFile(downloadedPath)).toEqual(uploadContent)
     await dialog.getByRole('button', { name: 'Close project files', exact: true }).click()
   })
 

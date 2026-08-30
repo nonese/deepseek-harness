@@ -94,7 +94,9 @@
 .downloadCell a:hover,
 .downloadCell a:focus-visible,
 .downloadButton:hover,
-.downloadButton:focus-visible {
+.downloadButton:focus-visible,
+.uploadButton:hover,
+.uploadButton:focus-visible {
   background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-primary);
 }
@@ -128,6 +130,64 @@
   color: inherit;
   cursor: pointer;
   font-size: 13px;
+}
+
+.toolbar {
+  min-height: 50px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+}
+
+.toolbar > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.uploadInput {
+  display: none;
+}
+
+.uploadButton {
+  min-height: 34px;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+}
+
+.uploadButton:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.uploadStatus {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-static-blue-50);
+  color: var(--dsw-static-blue-800);
+  font-size: 12px;
+}
+
+.uploadStatusError {
+  color: var(--dsw-static-red-600);
 }
 
 .content {
@@ -395,6 +455,8 @@
 @media (max-width: 560px) {
   .header,
   .breadcrumbs,
+  .toolbar,
+  .uploadStatus,
   .footer {
     padding-right: 16px;
     padding-left: 16px;

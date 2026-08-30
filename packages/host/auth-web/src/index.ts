@@ -4,10 +4,11 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { createReadStream } from 'node:fs'
-import { lstat, mkdir, opendir, readFile } from 'node:fs/promises'
+import { createReadStream, createWriteStream } from 'node:fs'
+import { link, lstat, mkdir, opendir, readFile, unlink } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { basename, dirname, extname, isAbsolute, resolve } from 'node:path'
+import { Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -67,12 +68,15 @@ export interface Config {
   projectFilePreviewMaxBytes?: number
   /** Treat HTTP 201 from an authorization-code token endpoint as HTTP 200. Defaults to false. */
   oidcTokenEndpointCreatedCompatibility?: boolean
+  /** Maximum uploaded project file size. Defaults to 50 MiB. */
+  projectFileUploadMaxBytes?: number
 }
 
 const DEFAULT_COOKIE_NAME = 'harness_session'
 const DEFAULT_MAX_BODY_BYTES = 64 * 1024
 const DEFAULT_PROJECT_FILE_MAX_ENTRIES = 1_000
 const DEFAULT_PROJECT_FILE_PREVIEW_MAX_BYTES = 512 * 1024
+const DEFAULT_PROJECT_FILE_UPLOAD_MAX_BYTES = 50 * 1024 * 1024
 const OIDC_CLIENT_SECRET_ENV = 'HARNESS_OIDC_CLIENT_SECRET'
 const OIDC_FLOW_TTL_MS = 10 * 60 * 1000
 const MAX_PENDING_OIDC_FLOWS = 256
@@ -87,6 +91,8 @@ export const Config: z<Config> = z.object({
   projectFilePreviewMaxBytes: z.natural().min(1024).max(10 * 1024 * 1024)
     .default(DEFAULT_PROJECT_FILE_PREVIEW_MAX_BYTES),
   oidcTokenEndpointCreatedCompatibility: z.boolean().default(false),
+  projectFileUploadMaxBytes: z.natural().min(1024).max(1024 * 1024 * 1024)
+    .default(DEFAULT_PROJECT_FILE_UPLOAD_MAX_BYTES),
 })
 
 interface JsonObject {
@@ -133,7 +139,18 @@ function authErrorStatus(error: AuthError): number {
   return 400
 }
 
+class ProjectFileConflictError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'ProjectFileConflictError'
+  }
+}
+
 function sendFailure(res: ServerResponse, error: unknown): void {
+  if (error instanceof ProjectFileConflictError) {
+    sendJson(res, 409, { error: { code: 'FILE_CONFLICT', message: error.message } })
+    return
+  }
   if (error instanceof AuthError) {
     sendJson(res, authErrorStatus(error), { error: { code: error.code, message: error.message } })
     return
@@ -625,6 +642,78 @@ async function sendProjectFileDownload(res: ServerResponse, root: string, relati
   }
 }
 
+function uploadContentLength(req: IncomingMessage, maxBytes: number): void {
+  const header = req.headers['content-length']
+  if (header === undefined) return
+  const value = Number(header)
+  /* v8 ignore next 3 -- node:http rejects malformed or negative Content-Length before route dispatch. */
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new AuthError('INVALID_INPUT', 'Content-Length 无效')
+  }
+  if (value > maxBytes) throw new AuthError('INVALID_INPUT', '上传文件过大')
+}
+
+async function receiveProjectFileUpload(
+  req: IncomingMessage,
+  root: string,
+  relativeDirectory: string,
+  filename: string,
+  maxBytes: number,
+  previewMaxBytes: number,
+): Promise<ProjectFileEntry> {
+  uploadContentLength(req, maxBytes)
+  const filenameSegments = projectRelativeSegments(filename)
+  if (filenameSegments.length !== 1 || filename.length > 255) {
+    throw new AuthError('INVALID_INPUT', '文件名必须是 1–255 个字符的单个项目文件名')
+  }
+  const directory = await projectFileTarget(root, relativeDirectory)
+  const directoryMetadata = await lstat(directory)
+  if (!directoryMetadata.isDirectory()) throw new AuthError('INVALID_INPUT', '上传目标不是目录')
+  const target = resolve(directory, filename)
+  /* v8 ignore next -- validated one-segment names keep this defense-in-depth check true. */
+  if (!managedPathContains(root, target)) throw new AuthError('FORBIDDEN', '不能上传到项目外路径')
+
+  const temporary = resolve(directory, `.upload-${randomUUID()}`)
+  let size = 0
+  const counter = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      size += chunk.length
+      if (size > maxBytes) {
+        callback(new AuthError('INVALID_INPUT', '上传文件过大'))
+        return
+      }
+      callback(null, chunk)
+    },
+  })
+  try {
+    await pipeline(req, counter, createWriteStream(temporary, { flags: 'wx', mode: 0o600 }))
+    try {
+      await link(temporary, target)
+    } catch (error) {
+      /* v8 ignore next 3 -- non-conflict hard-link failures require an external filesystem fault after validation. */
+      if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) {
+        throw error
+      }
+      throw new ProjectFileConflictError('同名文件已存在，请先更名')
+    }
+  } finally {
+    /* v8 ignore next 3 -- only concurrent external deletion or a host-filesystem fault reaches cleanup rejection. */
+    await unlink(temporary).catch((error: unknown) => {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error
+    })
+  }
+  const metadata = await lstat(target)
+  const path = [...projectRelativeSegments(relativeDirectory), filename].join('/')
+  return {
+    name: filename,
+    path,
+    kind: 'file',
+    size: metadata.size,
+    updatedAt: metadata.mtimeMs,
+    previewable: projectFilePreviewable(filename, metadata.size, previewMaxBytes),
+  }
+}
+
 /** Register login, session, administration, and managed-project routes. */
 export function apply(ctx: Context, config: Config = {}): void {
   const cookieName = config.cookieName ?? DEFAULT_COOKIE_NAME
@@ -634,6 +723,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   const projectFileMaxEntries = config.projectFileMaxEntries ?? DEFAULT_PROJECT_FILE_MAX_ENTRIES
   const projectFilePreviewMaxBytes = config.projectFilePreviewMaxBytes ?? DEFAULT_PROJECT_FILE_PREVIEW_MAX_BYTES
   const tokenEndpointCreatedCompatibility = config.oidcTokenEndpointCreatedCompatibility ?? false
+  const projectFileUploadMaxBytes = config.projectFileUploadMaxBytes ?? DEFAULT_PROJECT_FILE_UPLOAD_MAX_BYTES
   const pendingOidcFlows = new Map<string, PendingOidcFlow>()
 
   ctx.connection.registerAuthenticator({
@@ -861,11 +951,33 @@ export function apply(ctx: Context, config: Config = {}): void {
           return
         }
 
-        const projectFilesMatch = /^\/auth\/projects\/([^/]+)\/files(?:\/(preview|download))?$/.exec(pathname)
-        if (projectFilesMatch !== null && req.method === 'GET') {
+        const projectFilesMatch = /^\/auth\/projects\/([^/]+)\/files(?:\/(preview|download|upload))?$/.exec(pathname)
+        if (projectFilesMatch !== null && (req.method === 'GET' || req.method === 'PUT')) {
           const workspace = projectWorkspace(ctx, principal, decodeURIComponent(projectFilesMatch[1] as string))
           const relativePath = routeUrl.searchParams.get('path') ?? ''
           const operation = projectFilesMatch[2]
+          if (operation === 'upload') {
+            if (req.method !== 'PUT') {
+              sendJson(res, 405, { error: { code: 'METHOD_NOT_ALLOWED', message: '请求方法不受支持' } })
+              return
+            }
+            const filename = routeUrl.searchParams.get('name') ?? ''
+            sendJson(res, 201, {
+              file: await receiveProjectFileUpload(
+                req,
+                workspace.path,
+                relativePath,
+                filename,
+                projectFileUploadMaxBytes,
+                projectFilePreviewMaxBytes,
+              ),
+            })
+            return
+          }
+          if (req.method !== 'GET') {
+            sendJson(res, 405, { error: { code: 'METHOD_NOT_ALLOWED', message: '请求方法不受支持' } })
+            return
+          }
           if (operation === 'preview') {
             sendJson(res, 200, {
               preview: await projectFilePreview(workspace.path, relativePath, projectFilePreviewMaxBytes),
@@ -990,7 +1102,7 @@ export function apply(ctx: Context, config: Config = {}): void {
               ...sharedDeepSeek,
               enabledUsers: users.filter(user => ctx.auth.sharedDeepSeekPreference(user.id).enabled).length,
             },
-            limits: { maxBodyBytes, projectFileMaxEntries, projectFilePreviewMaxBytes },
+            limits: { maxBodyBytes, projectFileMaxEntries, projectFilePreviewMaxBytes, projectFileUploadMaxBytes },
           })
           return
         }

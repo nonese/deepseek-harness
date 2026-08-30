@@ -15,6 +15,7 @@ This table connects model-visible tool names to the plugin package and service s
 
 | Tool package | Model-visible names | Requires | Writes / affects | Shipped aliases | Deployment note |
 | --- | --- | --- | --- | --- | --- |
+| `@deepseek-ai/dsh-tool-artifacts` | `create_presentation`, `create_spreadsheet`, `create_word_document` | `ctx.tools`, `ctx.documentArtifacts`, `a calling Agent workspace` | `tool/call`, `one workspace-relative .docx, .pptx, or .xlsx file`, `tool/result` | - | The three document tools create validated Office Open XML artifacts below the calling session workspace. The local provider rejects path traversal, symbolic-link escapes, and accidental replacement unless overwrite is explicit. |
 | `@deepseek-ai/dsh-tool-ask-user` | `ask_user_question` | `ctx.tools`, `ctx.userQuestions` | `tool/call`, `tool/result after a UI/provider answers the question` | - | ask_user_question pauses the tool call until the active UI provider returns a human answer. |
 | `@deepseek-ai/dsh-tools` | `run_code` | `ctx.tools`, `ctx.codeRuntime (execution time)`, `ctx.systemPrompt` | `tool/call`, `one tool/code-dispatch-start + tool/code-dispatch pair per bridged sub-call`, `tool/result` | - | Owned by the tool registry as a reserved transport outside filterable capability layers under `mode: ptc` / `mode: both` (see the PTC mode Agent Note). Under `ptc` it is the registry's only wire contribution; the other visible capabilities are declared in a generated SDK section in the loaded runtime's language, and a program calls them through bindings scheduled under the native concurrency contract (submission-ordered starts and policy; concurrency-safe bodies overlap up to `maxParallelSubCalls`) that re-enter the complete guarded tool pipeline and link each nested execution to this outer result. |
 | `@deepseek-ai/dsh-plan-mode` | `exit_plan_mode` | `ctx.tools`, `ctx.systemPrompt`, `ctx.userQuestions (execution time, opportunistic)` | `tool/call`, `plan/mode inactive on an approved review`, `tool/result` | - | exit_plan_mode stays in the model-facing schema while planning is inactive so transitions add no tool-catalog churn on top of the plan-policy change. Its execute path rejects calls outside plan mode; in plan mode it presents the plan over the user-questions seam (approve / keep planning with feedback), and approval logs plan mode inactive at the step boundary. |
@@ -41,6 +42,323 @@ This table connects model-visible tool names to the plugin package and service s
 | `@deepseek-ai/dsh-tool-todo` | `todo_write` | `ctx.tools`, `owning Agent session` | `tool/call`, `todo/write`, `tool/result` | - | todo_write is session-owned state; UIs render the latest todo/write event as a checklist. `allowParallelInProgress` is required with no default, so the catalog states its choice: `true`, whose description invites several `in_progress` items. A deployment choosing `false` receives the same tool with a description asking for exactly one active task. |
 | `@deepseek-ai/dsh-tool-workflow` | `workflow` | `ctx.tools`, `ctx.workflowEngine`, `ctx.systemPrompt`, `a calling Agent (exec.agent parents the script children)` | `tool/call`, `tool/result` | - | - |
 | `@deepseek-ai/dsh-tool-web` | `web_fetch`, `web_search` | `ctx.tools`, `ctx.web`, `ctx.systemPrompt` | `tool/call`, `tool/result` | - | web_search and web_fetch keep provider selection behind ctx.web so model-visible schemas stay stable across backend swaps. |
+
+<a id="deepseek-aidsh-tool-artifacts"></a>
+
+## `@deepseek-ai/dsh-tool-artifacts`
+
+### `create_presentation`
+
+Create a clear widescreen PowerPoint deck in the current project. Use concise slide titles, keep content slides focused, and use two-column slides only for genuine comparisons. The output path must end with .pptx.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "output_path": {
+      "type": "string",
+      "description": "Project-relative .pptx path."
+    },
+    "overwrite": {
+      "type": "boolean",
+      "description": "Replace an existing regular file at the same path."
+    },
+    "title": {
+      "type": "string"
+    },
+    "author": {
+      "type": "string"
+    },
+    "slides": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "title",
+              "section",
+              "content",
+              "two-column"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "subtitle": {
+            "type": "string"
+          },
+          "bullets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "left": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "right": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "speakerNotes": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "title"
+        ]
+      }
+    }
+  },
+  "required": [
+    "output_path",
+    "title",
+    "slides"
+  ]
+}
+```
+
+Source: [`packages/document/tool-artifacts/src/index.ts`](../packages/document/tool-artifacts/src/index.ts)
+
+### `create_spreadsheet`
+
+Create a styled Excel workbook in the current project. Use it for gradebooks, schedules, assessment analysis, rosters, and structured teaching data. Prefer formulas for derived values. The output path must end with .xlsx.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "output_path": {
+      "type": "string",
+      "description": "Project-relative .xlsx path."
+    },
+    "overwrite": {
+      "type": "boolean",
+      "description": "Replace an existing regular file at the same path."
+    },
+    "title": {
+      "type": "string"
+    },
+    "author": {
+      "type": "string"
+    },
+    "sheets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "columns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          "freezeHeader": {
+            "type": "boolean"
+          },
+          "autoFilter": {
+            "type": "boolean"
+          },
+          "formulas": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "cell": {
+                  "type": "string"
+                },
+                "formula": {
+                  "type": "string"
+                },
+                "result": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "cell",
+                "formula"
+              ]
+            }
+          },
+          "numberFormats": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "range": {
+                  "type": "string"
+                },
+                "format": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "range",
+                "format"
+              ]
+            }
+          }
+        },
+        "required": [
+          "name",
+          "rows"
+        ]
+      }
+    }
+  },
+  "required": [
+    "output_path",
+    "sheets"
+  ]
+}
+```
+
+Source: [`packages/document/tool-artifacts/src/index.ts`](../packages/document/tool-artifacts/src/index.ts)
+
+### `create_word_document`
+
+Create a styled Word document in the current project. Use it for lesson plans, handouts, reports, rubrics, and structured teaching documents. The output path must be relative and end with .docx.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "output_path": {
+      "type": "string",
+      "description": "Project-relative .docx path."
+    },
+    "overwrite": {
+      "type": "boolean",
+      "description": "Replace an existing regular file at the same path."
+    },
+    "title": {
+      "type": "string"
+    },
+    "subtitle": {
+      "type": "string"
+    },
+    "author": {
+      "type": "string"
+    },
+    "sections": {
+      "type": "array",
+      "description": "Ordered document sections.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "heading": {
+            "type": "string"
+          },
+          "level": {
+            "type": "integer",
+            "enum": [
+              1,
+              2
+            ]
+          },
+          "paragraphs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "bullets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "table": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "headers": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "rows": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "required": [
+              "headers",
+              "rows"
+            ]
+          }
+        },
+        "required": [
+          "heading"
+        ]
+      }
+    }
+  },
+  "required": [
+    "output_path",
+    "title",
+    "sections"
+  ]
+}
+```
+
+Source: [`packages/document/tool-artifacts/src/index.ts`](../packages/document/tool-artifacts/src/index.ts)
+
+The three document tools create validated Office Open XML artifacts below the calling session workspace. The local provider rejects path traversal, symbolic-link escapes, and accidental replacement unless overwrite is explicit.
 
 <a id="deepseek-aidsh-tool-ask-user"></a>
 

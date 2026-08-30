@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { once } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import WebSocket, { type RawData } from 'ws'
@@ -17,6 +18,7 @@ import {
 import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
 import { provideBrowserCredentials } from './browser-credentials.ts'
 import TypertGatewayService, {
+  delegateRemoteEventDelivery,
   TypertGatewayError,
   type Config as GatewayConfig,
   type TypertRemoteEventDispatch,
@@ -793,6 +795,103 @@ describe('Typert Remote streams', () => {
     await unregister()
   })
 
+  it('delegates a filtered user delivery without leaking its waterfall or cancellation', async () => {
+    const { ctx } = await setup(true)
+    const source = new RemoteEventSourceProbe()
+    const unregister = ctx.typertGateway.registerRemoteEvents(source.source, REMOTE_HOST)
+    const agent = ctx.extend()
+    ctx.typert.contexts.registerHost('agent', {
+      wire: 'agentId',
+      wireTypeSymbol: '@fixture#AgentId',
+      identity: candidate => candidate === agent ? agentId('alice-agent') : undefined,
+      resolve: id => id === 'alice-agent' ? agent : undefined,
+    })
+    await browserCookie(ctx)
+    const principals = new AsyncLocalStorage<string>()
+    vi.spyOn(ctx.connection, 'authorizeRequest').mockImplementation(async (request) => {
+      const principal = request.headers instanceof Headers
+        ? request.headers.get('x-fixture-principal') ?? undefined
+        : request.headers['x-fixture-principal']
+      if (typeof principal !== 'string') return 401
+      return { run: operation => principals.run(principal, operation) }
+    })
+    ctx.typertGateway.registerMiddleware({
+      invoke: async (_request, next) => next(),
+      stream: async (request, next) => {
+        const principal = principals.getStore()
+        const source = await next()
+        if (request.namespace !== '$events' || request.method !== 'follow') return source
+        return (async function *() {
+          const visible = new Set<string>()
+          for await (const raw of source) {
+            if (typeof raw !== 'object' || raw === null) continue
+            const type: unknown = Reflect.get(raw, 'type')
+            const eventId: unknown = Reflect.get(raw, 'eventId')
+            if (type === 'waterfall' && typeof eventId === 'string') {
+              if (Reflect.get(raw, 'agentId') === `${principal ?? ''}-agent`) {
+                visible.add(eventId)
+                yield raw
+              } else {
+                delegateRemoteEventDelivery(raw)
+              }
+            } else if (type === 'cancel' && typeof eventId === 'string') {
+              if (visible.delete(eventId)) yield raw
+            } else {
+              yield raw
+            }
+          }
+        })()
+      },
+    })
+    const alice = await openEventClient(ctx, 'events-alice', 'alice')
+    const bob = await openEventClient(ctx, 'events-bob', 'bob')
+    const pending = pendingInvocation(agent)
+    source.push(pending.dispatch)
+
+    await vi.waitFor(() => { expect(deliveredInvocation(alice)).toBeDefined() })
+    const aliceFrame = deliveredInvocation(alice)!
+    await sendEventResult(alice, aliceFrame, { kind: 'next' })
+    await expect(pending.outcome).resolves.toEqual({ kind: 'next' })
+
+    const abort = new AbortController()
+    const cancelled = pendingInvocation(agent, abort.signal, 'cancel-owner')
+    source.push(cancelled.dispatch)
+    let cancelledFrame: RemoteEventInvocationFrame | undefined
+    await vi.waitFor(() => {
+      cancelledFrame = alice.frames
+        .filter(frame => frame.type === 'item' && frame.streamId === alice.streamId)
+        .map(frame => frame.value)
+        .find(value => typeof value === 'object'
+          && value !== null
+          && Reflect.get(value, 'type') === 'waterfall'
+          && Reflect.get(value, 'eventId') !== aliceFrame.eventId) as RemoteEventInvocationFrame | undefined
+      expect(cancelledFrame).toBeDefined()
+    })
+    const reason = new Error('fixture owner cancellation')
+    const rejected = expect(cancelled.outcome).rejects.toBe(reason)
+    abort.abort(reason)
+    await rejected
+    await vi.waitFor(() => {
+      const bobEventTypes = bob.frames
+        .filter(frame => frame.type === 'item' && frame.streamId === bob.streamId)
+        .map((frame) => {
+          if (typeof frame.value !== 'object' || frame.value === null) return undefined
+          const type: unknown = Reflect.get(frame.value, 'type')
+          return type
+        })
+      expect(bobEventTypes).toEqual(['ready'])
+      expect(alice.frames).toContainEqual({
+        type: 'item',
+        streamId: alice.streamId,
+        value: { type: 'cancel', eventId: cancelledFrame!.eventId },
+      })
+    })
+
+    alice.socket.close()
+    bob.socket.close()
+    await unregister()
+  })
+
   it('delivers a pending waterfall to the first Client that connects', async () => {
     const { ctx } = await setup(true)
     const source = new RemoteEventSourceProbe()
@@ -1084,13 +1183,18 @@ interface RemoteEventTestClient {
   readonly clientId: RemoteEventClientId
   readonly origin: string
   readonly cookie: string
+  readonly principal?: string
 }
 
-async function openEventClient(ctx: Context, streamId: string): Promise<RemoteEventTestClient> {
+async function openEventClient(
+  ctx: Context,
+  streamId: string,
+  principal?: string,
+): Promise<RemoteEventTestClient> {
   const origin = `http://127.0.0.1:${String(ctx.webServer.port)}`
   const cookie = await browserCookie(ctx)
   const socket = new WebSocket(`${origin.replace('http:', 'ws:')}/api/remote.mux`, {
-    headers: { cookie },
+    headers: { cookie, ...(principal === undefined ? {} : { 'x-fixture-principal': principal }) },
   })
   await once(socket, 'open')
   const frames: Record<string, unknown>[] = []
@@ -1108,7 +1212,15 @@ async function openEventClient(ctx: Context, streamId: string): Promise<RemoteEv
     if (typeof candidate === 'string') clientId = candidate as RemoteEventClientId
   })
   if (clientId === undefined) throw new Error('Remote event stream omitted its Client id')
-  return { socket, frames, streamId, clientId, origin, cookie }
+  return {
+    socket,
+    frames,
+    streamId,
+    clientId,
+    origin,
+    cookie,
+    ...(principal === undefined ? {} : { principal }),
+  }
 }
 
 function deliveredInvocation(client: RemoteEventTestClient): RemoteEventInvocationFrame | undefined {
@@ -1140,7 +1252,11 @@ async function sendEventResult(
   const rpcId = `remote-event-result-${client.streamId}`
   const response = await fetch(`${client.origin}/api/$events/result`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', cookie: client.cookie },
+    headers: {
+      'content-type': 'application/json',
+      cookie: client.cookie,
+      ...(client.principal === undefined ? {} : { 'x-fixture-principal': client.principal }),
+    },
     body: JSON.stringify({
       type: 'client-request',
       rpcId,

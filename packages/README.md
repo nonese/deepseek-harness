@@ -54,6 +54,7 @@ Every package lives in exactly one group; new packages join existing groups, and
 | [`webhook/`](webhook/README.md) | Verified external events, trusted rules, and fire-and-forget Workspace Sessions |
 | [`web/`](web/README.md) | Web capability family: seam, search/fetch providers, model-facing web tools |
 | [`attachment/`](attachment/README.md) | Durable attachment identity, validation, local content-addressed storage |
+| [`document/`](document/README.md) | Workspace-confined Word, PowerPoint, and Excel artifact generation |
 | [`spill/`](spill/README.md) | Spill capability family: storage seam, local impl, tool-result spill policy |
 | [`todo/`](todo/README.md) | The model-facing `todo_write` tool |
 | [`plan/`](plan/README.md) | Plan collaboration state with a direct entry command and reviewed exit |

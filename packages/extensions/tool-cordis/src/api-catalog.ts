@@ -924,6 +924,31 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'documentArtifacts',
+    summary: 'Office artifact generation service.',
+    description: 'Office artifact generation service. Implementations must keep `outputPath` below `cwd`, reject symbolic-link escapes, validate the generated OOXML archive, and publish atomically.',
+    methods: [
+      {
+        signature: 'abstract createWord(request: WordDocumentRequest, signal?: AbortSignal): Promise<DocumentArtifactResult>',
+        description: 'Create a Word document.',
+        parameters: [{ name: 'request', description: 'trusted workspace root plus model-authored document content.' }, { name: 'signal', description: 'aborts before publication.' }],
+        returns: 'the published artifact metadata.',
+      },
+      {
+        signature: 'abstract createPresentation(request: PresentationRequest, signal?: AbortSignal): Promise<DocumentArtifactResult>',
+        description: 'Create a PowerPoint presentation.',
+        parameters: [{ name: 'request', description: 'trusted workspace root plus model-authored slide content.' }, { name: 'signal', description: 'aborts before publication.' }],
+        returns: 'the published artifact metadata.',
+      },
+      {
+        signature: 'abstract createSpreadsheet(request: SpreadsheetRequest, signal?: AbortSignal): Promise<DocumentArtifactResult>',
+        description: 'Create an Excel workbook.',
+        parameters: [{ name: 'request', description: 'trusted workspace root plus model-authored workbook content.' }, { name: 'signal', description: 'aborts before publication.' }],
+        returns: 'the published artifact metadata.',
+      },
+    ],
+  },
+  {
     key: 'e2b',
     summary: 'Creates one lazily consumable E2B SDK handle and deletes the sandbox at timeout or disposal.',
     description: 'Creates one lazily consumable E2B SDK handle and deletes the sandbox at timeout or disposal. Creation begins at plugin construction; adapters await getSandbox before their first operation.',
@@ -4051,6 +4076,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface DirectoryRegistrationHandle {\n    (): void;\n    replace(entries: readonly LlmConfigurableProvider[]): void;\n}',
   },
   {
+    name: 'DocumentArtifactKind',
+    declaration: 'export type DocumentArtifactKind = \'docx\' | \'pptx\' | \'xlsx\';',
+  },
+  {
+    name: 'DocumentArtifactResult',
+    declaration: 'export interface DocumentArtifactResult {\n    kind: DocumentArtifactKind;\n    path: string;\n    sizeBytes: number;\n    itemCount: number;\n    validation: \'ooxml\';\n}',
+  },
+  {
     name: 'Domain',
     declaration: 'export interface Domain<S extends DomainSpec> {\n    readonly name: string;\n    readonly global: DomainGlobalHandleOf<S>;\n    table<N extends keyof S[\'tables\'] & string>(name: N): KvTable<TableKeyOf<S, N>, TableValueOf<S, N>>;\n    close(): Promise<void>;\n}',
   },
@@ -4689,6 +4722,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'PrepareSessionOptions',
     declaration: 'export type PrepareSessionOptions = (CreateSessionOptions & {\n    readonly seedSource?: undefined;\n}) | RestoredSessionOptions;',
+  },
+  {
+    name: 'PresentationRequest',
+    declaration: 'export interface PresentationRequest {\n    cwd: string;\n    outputPath: string;\n    overwrite?: boolean;\n    title: string;\n    author?: string;\n    slides: PresentationSlide[];\n}',
+  },
+  {
+    name: 'PresentationSlide',
+    declaration: 'export interface PresentationSlide {\n    kind: PresentationSlideKind;\n    title: string;\n    subtitle?: string;\n    bullets?: string[];\n    left?: string[];\n    right?: string[];\n    speakerNotes?: string;\n}',
+  },
+  {
+    name: 'PresentationSlideKind',
+    declaration: 'export type PresentationSlideKind = \'title\' | \'section\' | \'content\' | \'two-column\';',
   },
   {
     name: 'PresetOption',
@@ -5515,6 +5560,26 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SpillSource {\n    toolName: string;\n    callId: ToolCallId;\n    label: string;\n}',
   },
   {
+    name: 'SpreadsheetFormula',
+    declaration: 'export interface SpreadsheetFormula {\n    cell: string;\n    formula: string;\n    result?: Exclude<SpreadsheetScalar, null>;\n}',
+  },
+  {
+    name: 'SpreadsheetNumberFormat',
+    declaration: 'export interface SpreadsheetNumberFormat {\n    range: string;\n    format: string;\n}',
+  },
+  {
+    name: 'SpreadsheetRequest',
+    declaration: 'export interface SpreadsheetRequest {\n    cwd: string;\n    outputPath: string;\n    overwrite?: boolean;\n    title?: string;\n    author?: string;\n    sheets: SpreadsheetSheet[];\n}',
+  },
+  {
+    name: 'SpreadsheetScalar',
+    declaration: 'export type SpreadsheetScalar = string | number | boolean | null;',
+  },
+  {
+    name: 'SpreadsheetSheet',
+    declaration: 'export interface SpreadsheetSheet {\n    name: string;\n    columns?: string[];\n    rows: SpreadsheetScalar[][];\n    freezeHeader?: boolean;\n    autoFilter?: boolean;\n    formulas?: SpreadsheetFormula[];\n    numberFormats?: SpreadsheetNumberFormat[];\n}',
+  },
+  {
     name: 'StorageBackend',
     declaration: 'export interface StorageBackend {\n    readonly kv?: KvFacet;\n    close(): Promise<void>;\n}',
   },
@@ -6205,6 +6270,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'WebUpgradeRoute',
     declaration: 'export interface WebUpgradeRoute {\n    path: string;\n    handler: (req: IncomingMessage, socket: Duplex, head: Buffer) => void | Promise<void>;\n}',
+  },
+  {
+    name: 'WordDocumentRequest',
+    declaration: 'export interface WordDocumentRequest {\n    cwd: string;\n    outputPath: string;\n    overwrite?: boolean;\n    title: string;\n    subtitle?: string;\n    author?: string;\n    sections: WordSection[];\n}',
+  },
+  {
+    name: 'WordSection',
+    declaration: 'export interface WordSection {\n    heading: string;\n    level?: 1 | 2;\n    paragraphs?: string[];\n    bullets?: string[];\n    table?: WordTable;\n}',
+  },
+  {
+    name: 'WordTable',
+    declaration: 'export interface WordTable {\n    headers: string[];\n    rows: string[][];\n}',
   },
   {
     name: 'WorkflowAgentEndInfo',

@@ -290,7 +290,7 @@ export interface Config {
 }
 ```
 
-来源：[`packages/api/gateway/src/index.ts:119`](../packages/api/gateway/src/index.ts)
+来源：[`packages/api/gateway/src/index.ts:134`](../packages/api/gateway/src/index.ts)
 
 <a id="deepseek-aidsh-api-session-controller"></a>
 
@@ -323,6 +323,36 @@ export interface Config {
 ```
 
 来源：[`packages/api/settings-controller/src/index.ts:41`](../packages/api/settings-controller/src/index.ts)
+
+<a id="deepseek-aidsh-artifacts-local"></a>
+
+## `@deepseek-ai/dsh-artifacts-local`
+
+```ts config-catalog
+/** Local document generator limits and visual defaults. */
+export interface Config {
+  /** Maximum Word sections. Defaults to 64. */
+  maxWordSections?: number
+  /** Maximum presentation slides. Defaults to 80. */
+  maxPresentationSlides?: number
+  /** Maximum workbook worksheets. Defaults to 20. */
+  maxSpreadsheetSheets?: number
+  /** Maximum rows in one worksheet. Defaults to 10,000. */
+  maxSpreadsheetRowsPerSheet?: number
+  /** Maximum cells across one workbook. Defaults to 100,000. */
+  maxSpreadsheetCells?: number
+  /** Maximum text characters across one request. Defaults to 1,000,000. */
+  maxTextChars?: number
+  /** Maximum generated archive size. Defaults to 100 MiB. */
+  maxOutputBytes?: number
+  /** Font used across generated artifacts. Defaults to Aptos. */
+  fontFamily?: string
+  /** Six-digit hexadecimal accent color. Defaults to 2F6FEB. */
+  accentColor?: string
+}
+```
+
+来源：[`packages/document/artifacts-local/src/index.ts:19`](../packages/document/artifacts-local/src/index.ts)
 
 <a id="deepseek-aidsh-attachment-local"></a>
 
@@ -915,10 +945,12 @@ export interface Config {
   projectFilePreviewMaxBytes?: number
   /** Treat HTTP 201 from an authorization-code token endpoint as HTTP 200. Defaults to false. */
   oidcTokenEndpointCreatedCompatibility?: boolean
+  /** Maximum uploaded project file size. Defaults to 50 MiB. */
+  projectFileUploadMaxBytes?: number
 }
 ```
 
-来源：[`packages/host/auth-web/src/index.ts:57`](../packages/host/auth-web/src/index.ts)
+来源：[`packages/host/auth-web/src/index.ts:58`](../packages/host/auth-web/src/index.ts)
 
 <a id="deepseek-aidsh-host-directory-picker-browse"></a>
 
@@ -3527,6 +3559,7 @@ export interface Config {
 - `@deepseek-ai/dsh-subagent`（[`packages/subagent/subagent/src/index.ts`](../packages/subagent/subagent/src/index.ts)）
 - `@deepseek-ai/dsh-subprocess-local`（[`packages/subprocess/subprocess-local/src/index.ts`](../packages/subprocess/subprocess-local/src/index.ts)）
 - `@deepseek-ai/dsh-terminal`（[`packages/terminal/terminal/src/index.ts`](../packages/terminal/terminal/src/index.ts)）
+- `@deepseek-ai/dsh-tool-artifacts` — 需要 `documentArtifacts` · `tools`（[`packages/document/tool-artifacts/src/index.ts`](../packages/document/tool-artifacts/src/index.ts)）
 - `@deepseek-ai/dsh-tool-ask-user` — 需要 `tools` · `userInteraction`（[`packages/interaction/tool-ask-user/src/index.ts`](../packages/interaction/tool-ask-user/src/index.ts)）
 - `@deepseek-ai/dsh-tool-call-timeout-policy` — 需要 `tools`（[`packages/guard/timeout-policy/src/index.ts`](../packages/guard/timeout-policy/src/index.ts)）
 - `@deepseek-ai/dsh-tool-cordis` — 需要 `tools` · `systemPrompt` · `dynamicCordisRunner` · `cordisInspect`（[`packages/extensions/tool-cordis/src/index.ts`](../packages/extensions/tool-cordis/src/index.ts)）
@@ -3539,6 +3572,7 @@ export interface Config {
 
 抽象服务类——部署时应改为加载具体的实现包（参见[能力 seam](../.agents/notes/implemented/architecture/2026-06-13-capability-seams.zh.md)）。
 
+- `@deepseek-ai/dsh-artifacts` — 抽象 `DocumentArtifactRuntime`（[`packages/document/artifacts/src/index.ts`](../packages/document/artifacts/src/index.ts)）
 - `@deepseek-ai/dsh-attachment` — 抽象 `AttachmentStore`（[`packages/attachment/attachment/src/index.ts`](../packages/attachment/attachment/src/index.ts)）
 - `@deepseek-ai/dsh-auth` — 抽象 `AuthService`（[`packages/identity/auth/src/index.ts`](../packages/identity/auth/src/index.ts)）
 - `@deepseek-ai/dsh-code-runtime` — 抽象 `CodeRuntime`（[`packages/code-runtime/code-runtime/src/index.ts`](../packages/code-runtime/code-runtime/src/index.ts)）

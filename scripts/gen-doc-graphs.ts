@@ -537,6 +537,15 @@ const SERVICE_ROLES: ServiceRole[] = [
     note: 'Runs one model-written program against host-provided async bindings; backends differ by substrate and language (the tool registry consumes it for PTC mode).',
   },
   {
+    key: 'documentArtifacts',
+    pkg: 'artifacts',
+    title: 'Office artifact generation seam',
+    mode: 'seam',
+    implementations: ['artifacts-local'],
+    consumers: ['tool-artifacts'],
+    note: 'Creates validated Word, PowerPoint, and Excel files below a trusted session workspace; the host owns the generator and presets decide which agents receive creation tools.',
+  },
+  {
     key: 'fs',
     pkg: 'fs',
     title: 'Filesystem provider seam',

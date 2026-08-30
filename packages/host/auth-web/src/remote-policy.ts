@@ -6,6 +6,7 @@ import type {
   InvokeRemoteRequest,
   TypertGatewayMiddleware,
 } from '@deepseek-ai/dsh-api-gateway'
+import { delegateRemoteEventDelivery } from '@deepseek-ai/dsh-api-gateway'
 import type {
   SessionControlFrame,
   SessionListValue,
@@ -82,6 +83,12 @@ interface RemoteEventEmit {
 interface RemoteEventWaterfall {
   readonly type: 'waterfall'
   readonly agentId: string
+  readonly eventId: string
+}
+
+interface RemoteEventCancel {
+  readonly type: 'cancel'
+  readonly eventId: string
 }
 
 function endpointOf(request: InvokeRemoteRequest): string {
@@ -342,6 +349,7 @@ async function *projectEventStream(
   principal: AuthPrincipal,
   source: AsyncIterable<unknown>,
 ): AsyncGenerator {
+  const visibleWaterfalls = new Set<string>()
   for await (const raw of source) {
     if (typeof raw !== 'object' || raw === null) continue
     const type = (raw as Readonly<Record<string, unknown>>).type
@@ -352,11 +360,17 @@ async function *projectEventStream(
     }
     if (type === 'waterfall') {
       const waterfall = raw as RemoteEventWaterfall
-      if (await sessionOwned(ctx, principal, waterfall.agentId)) yield raw
+      if (await sessionOwned(ctx, principal, waterfall.agentId)) {
+        visibleWaterfalls.add(waterfall.eventId)
+        yield raw
+      } else {
+        delegateRemoteEventDelivery(raw)
+      }
       continue
     }
     if (type === 'cancel') {
-      yield raw
+      const cancellation = raw as RemoteEventCancel
+      if (visibleWaterfalls.delete(cancellation.eventId)) yield raw
       continue
     }
     if (type !== 'emit') continue
@@ -406,13 +420,13 @@ export function userScopedRemotePolicy(ctx: Context): TypertGatewayMiddleware {
   return {
     invoke: async (request, next) => {
       const principal = ctx.auth.currentPrincipal()
-      if (principal === undefined) return next()
+      if (principal === undefined) forbidden('authentication is required')
       await requireRequestOwnership(ctx, principal, request)
       return projectUnary(ctx, principal, request, await next())
     },
     stream: async (request, next) => {
       const principal = ctx.auth.currentPrincipal()
-      if (principal === undefined) return next()
+      if (principal === undefined) forbidden('authentication is required')
       await requireRequestOwnership(ctx, principal, request)
       return projectStream(ctx, principal, request, await next())
     },

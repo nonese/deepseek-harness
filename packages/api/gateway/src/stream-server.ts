@@ -2,6 +2,7 @@
 
 import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
+import type { ConnectionRequestAuthorization } from '@deepseek-ai/dsh-client-connection'
 import WebSocket, { WebSocketServer, type RawData } from 'ws'
 import {
   parseRemoteStreamClientMessage,
@@ -41,11 +42,17 @@ export class RemoteStreamMuxServer {
    * @param req - authenticated HTTP upgrade request.
    * @param socket - carrier socket transferred to the WebSocket server.
    * @param head - bytes already read after the HTTP upgrade headers.
+   * @param authorization - execution context retained for every logical stream on this socket.
    */
-  handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
+  handleUpgrade(
+    req: IncomingMessage,
+    socket: Duplex,
+    head: Buffer,
+    authorization: ConnectionRequestAuthorization,
+  ): void {
     this.server.handleUpgrade(req, socket, head, (websocket) => {
       this.startHeartbeat()
-      const connection = new RemoteStreamMuxConnection(websocket, this.open, this.failure)
+      const connection = new RemoteStreamMuxConnection(websocket, this.open, this.failure, authorization)
       const done = connection.run()
       this.connections.add(done)
       void done.then(() => { this.connections.delete(done) })
@@ -91,6 +98,7 @@ class RemoteStreamMuxConnection {
     private readonly socket: WebSocket,
     private readonly open: RemoteStreamOpener,
     private readonly failure: RemoteStreamFailureMapper,
+    private readonly authorization: ConnectionRequestAuthorization,
   ) {}
 
   async run(): Promise<void> {
@@ -130,7 +138,12 @@ class RemoteStreamMuxConnection {
       done: Promise.resolve(),
     }
     this.streams.set(message.streamId, active)
-    const done = this.pump(message.streamId, message.endpoint, message.payload, active)
+    const done = this.authorization.run(() => this.pump(
+      message.streamId,
+      message.endpoint,
+      message.payload,
+      active,
+    ))
     active.done = done
     const remove = (): void => { this.streams.delete(message.streamId) }
     void done.then(remove, remove)

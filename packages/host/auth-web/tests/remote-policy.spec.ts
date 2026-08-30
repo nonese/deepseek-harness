@@ -259,21 +259,25 @@ describe('per-user Remote policy', () => {
     ])
   })
 
-  it('passes through requests when no authenticated principal is installed', async () => {
+  it('rejects requests when no authenticated principal is installed', async () => {
     const { ctx } = fixture()
     const auth = ctx.auth as unknown as { currentPrincipal: () => AuthPrincipal | undefined }
     auth.currentPrincipal = () => undefined
     const policy = userScopedRemotePolicy(ctx)
-    await expect(policy.invoke(
+    const invokeNext = vi.fn(() => Promise.resolve('value'))
+    expect((await failure(policy.invoke(
       request('unscoped', 'method'),
-      () => Promise.resolve('value'),
-    )).resolves.toBe('value')
+      invokeNext,
+    ))).failure.code).toBe('forbidden')
+    expect(invokeNext).not.toHaveBeenCalled()
 
     const source = (async function *() { yield 'frame' })()
-    await expect(policy.stream(
+    const streamNext = vi.fn(() => Promise.resolve(source))
+    expect((await failure(policy.stream(
       request('unscoped', 'stream'),
-      () => Promise.resolve(source),
-    )).resolves.toBe(source)
+      streamNext,
+    ))).failure.code).toBe('forbidden')
+    expect(streamNext).not.toHaveBeenCalled()
   })
 
   it('rejects native filesystem access and unscoped ordinary-user endpoints', async () => {
@@ -453,9 +457,10 @@ describe('per-user Remote policy', () => {
       'invalid',
       { type: 'unknown' },
       { type: 'ready', host: { home: '/host-home' }, version: 1 },
-      { type: 'waterfall', agentId: 'bob-session' },
-      { type: 'waterfall', agentId: 'alice-session' },
-      { type: 'cancel' },
+      { type: 'waterfall', eventId: 'bob-waterfall', agentId: 'bob-session' },
+      { type: 'waterfall', eventId: 'alice-waterfall', agentId: 'alice-session' },
+      { type: 'cancel', eventId: 'bob-waterfall' },
+      { type: 'cancel', eventId: 'alice-waterfall' },
       { type: 'emit', event: 'llm/adapters-updated', args: [] },
       { type: 'emit', event: 'credentials/reference-updated', args: [] },
       { type: 'emit', event: 'settings/document-updated', args: [] },
@@ -480,8 +485,8 @@ describe('per-user Remote policy', () => {
     const ordinary = await collect()
     expect(ordinary).toEqual([
       { type: 'ready', host: { home: alice.root }, version: 1 },
-      { type: 'waterfall', agentId: 'alice-session' },
-      { type: 'cancel' },
+      { type: 'waterfall', eventId: 'alice-waterfall', agentId: 'alice-session' },
+      { type: 'cancel', eventId: 'alice-waterfall' },
       { type: 'emit', event: 'llm/adapters-updated', args: [] },
       { type: 'emit', event: 'api-session/added', args: [{ cwd: join(alice.projects, 'one') }] },
       { type: 'emit', event: 'session/custom', args: [42, 'alice-session'] },

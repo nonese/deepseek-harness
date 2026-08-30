@@ -2,16 +2,18 @@
 
 import type { ChildProcess } from 'node:child_process'
 import { spawn } from 'node:child_process'
-import { stat } from 'node:fs/promises'
+import { once } from 'node:events'
+import { realpath, stat } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
 import { createRequire } from 'node:module'
 import { createServer } from 'node:net'
 import type { AddressInfo } from 'node:net'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import WebSocket, { type RawData } from 'ws'
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url))
 const DSH_SOURCE_BIN = join(REPO_ROOT, 'apps/cli/src/bin.ts')
@@ -29,6 +31,12 @@ interface RunningWeb {
 interface HttpResult {
   readonly status: number
   readonly body: string
+}
+
+interface StreamRequest {
+  readonly id: string
+  readonly endpoint: string
+  readonly args: Readonly<Record<string, unknown>>
 }
 
 function redact(output: string): string {
@@ -157,6 +165,101 @@ function describeSettings(port: number, host: string, cookie?: string): Promise<
   })
 }
 
+/** Invoke one authenticated Remote endpoint through the real HTTP carrier. */
+async function remoteRpc<T>(origin: string, cookie: string, endpoint: string, args: object): Promise<T> {
+  const response = await fetch(new URL(`/api/${endpoint}`, origin), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie },
+    body: JSON.stringify({
+      type: 'client-request',
+      rpcId: `web-auth-${endpoint}`,
+      method: endpoint,
+      payload: { args },
+    }),
+  })
+  expect(response.status).toBe(200)
+  const body = await response.json() as {
+    result: { ok: true; value: T } | { ok: false; error: { code: string; message: string } }
+  }
+  if (!body.result.ok) throw new Error(`${endpoint} failed: ${body.result.error.code}: ${body.result.error.message}`)
+  return body.result.value
+}
+
+/** Read each logical stream's first item or terminal error over one authenticated socket. */
+async function openingStreamFrames(
+  origin: string,
+  cookie: string,
+  requests: readonly StreamRequest[],
+): Promise<ReadonlyMap<string, Readonly<Record<string, unknown>>>> {
+  const socket = new WebSocket(origin.replace(/^http/u, 'ws') + '/api/remote.mux', {
+    headers: { cookie },
+  })
+  await once(socket, 'open')
+  const frames = new Map<string, Readonly<Record<string, unknown>>>()
+  try {
+    return await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`timed out waiting for streams: ${requests.map(request => request.id).join(', ')}`))
+      }, 10_000)
+      const finish = (): void => {
+        if (frames.size !== requests.length) return
+        clearTimeout(timer)
+        resolve(frames)
+      }
+      socket.on('message', (data) => {
+        try {
+          const frame = JSON.parse(rawText(data)) as Readonly<Record<string, unknown>>
+          const id = frame.streamId
+          if (typeof id !== 'string' || frames.has(id)) return
+          if (frame.type !== 'item' && frame.type !== 'error' && frame.type !== 'end') return
+          frames.set(id, frame)
+          finish()
+        } catch (error) {
+          clearTimeout(timer)
+          reject(error instanceof Error ? error : new Error(String(error)))
+        }
+      })
+      socket.once('error', (error) => {
+        clearTimeout(timer)
+        reject(error)
+      })
+      socket.once('close', () => {
+        if (frames.size === requests.length) return
+        clearTimeout(timer)
+        reject(new Error('Remote stream socket closed before all opening frames'))
+      })
+      for (const request of requests) {
+        socket.send(JSON.stringify({
+          type: 'open',
+          streamId: request.id,
+          endpoint: request.endpoint,
+          payload: { args: request.args },
+        }))
+      }
+    })
+  } finally {
+    socket.close()
+    await once(socket, 'close').catch(() => undefined)
+  }
+}
+
+function rawText(data: RawData): string {
+  if (Array.isArray(data)) return Buffer.concat(data).toString('utf8')
+  if (data instanceof ArrayBuffer) return Buffer.from(data).toString('utf8')
+  return Buffer.from(data).toString('utf8')
+}
+
+function streamValue(
+  frames: ReadonlyMap<string, Readonly<Record<string, unknown>>>,
+  id: string,
+): Readonly<Record<string, unknown>> {
+  const frame = frames.get(id)
+  expect(frame).toMatchObject({ type: 'item', streamId: id })
+  const value = frame?.value
+  if (typeof value !== 'object' || value === null) throw new Error(`${id} did not return an object item`)
+  return value as Readonly<Record<string, unknown>>
+}
+
 describe('dsh web authentication through the real CLI', () => {
   it('rejects a forged loopback Host and preserves a local-login cookie across restart', { timeout: 180_000 }, async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-web-auth-real-cli-'))
@@ -216,6 +319,100 @@ describe('dsh web authentication through the real CLI', () => {
       const memberSetCookie = memberLogin.headers.get('set-cookie')
       if (memberSetCookie === null) throw new Error('real CLI member login omitted Set-Cookie')
       const memberCookie = memberSetCookie.split(';', 1)[0]!
+
+      const createProject = async (ownerCookie: string, name: string): Promise<{ id: string; path: string }> => {
+        const response = await fetch(new URL('/auth/projects', firstUrl), {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', cookie: ownerCookie, origin: firstUrl.origin },
+          body: JSON.stringify({ name }),
+        })
+        expect(response.status).toBe(201)
+        return (await response.json() as { project: { id: string; path: string } }).project
+      }
+      const [adminProject, memberProject] = await Promise.all([
+        createProject(cookie, '管理员隔离项目'),
+        createProject(memberCookie, '普通用户隔离项目'),
+      ])
+      const [adminSession, memberSession] = await Promise.all([
+        remoteRpc<{ sessionId: string }>(firstUrl.origin, cookie, 'session/create', {
+          request: { workspaceId: adminProject.id },
+        }),
+        remoteRpc<{ sessionId: string }>(firstUrl.origin, memberCookie, 'session/create', {
+          request: { workspaceId: memberProject.id },
+        }),
+      ])
+
+      const upload = (ownerCookie: string, projectId: string, content: string): Promise<Response> => {
+        const url = new URL(`/auth/projects/${encodeURIComponent(projectId)}/files/upload`, firstUrl)
+        url.searchParams.set('name', '同名资料.txt')
+        return fetch(url, {
+          method: 'PUT',
+          headers: { cookie: ownerCookie, origin: firstUrl.origin, 'content-type': 'text/plain' },
+          body: content,
+        })
+      }
+      const [adminUpload, memberUpload] = await Promise.all([
+        upload(cookie, adminProject.id, 'admin-owned\n'),
+        upload(memberCookie, memberProject.id, 'member-owned\n'),
+      ])
+      expect([adminUpload.status, memberUpload.status]).toEqual([201, 201])
+      const download = async (ownerCookie: string, projectId: string): Promise<string> => {
+        const url = new URL(`/auth/projects/${encodeURIComponent(projectId)}/files/download`, firstUrl)
+        url.searchParams.set('path', '同名资料.txt')
+        return (await fetch(url, { headers: { cookie: ownerCookie } })).text()
+      }
+      await expect(Promise.all([
+        download(cookie, adminProject.id),
+        download(memberCookie, memberProject.id),
+      ])).resolves.toEqual(['admin-owned\n', 'member-owned\n'])
+      expect((await fetch(new URL(`/auth/projects/${adminProject.id}/files`, firstUrl), {
+        headers: { cookie: memberCookie },
+      })).status).toBe(404)
+      expect((await fetch(new URL(`/auth/projects/${memberProject.id}/files`, firstUrl), {
+        headers: { cookie },
+      })).status).toBe(404)
+
+      const openingRequests = [
+        { id: 'workspaces', endpoint: 'workspace/follow', args: {} },
+        { id: 'control', endpoint: 'session/control', args: {} },
+        { id: 'events', endpoint: '$events', args: {} },
+      ] as const
+      const [adminFrames, memberFrames] = await Promise.all([
+        openingStreamFrames(firstUrl.origin, cookie, openingRequests),
+        openingStreamFrames(firstUrl.origin, memberCookie, openingRequests),
+      ])
+      const adminWorkspace = JSON.stringify(streamValue(adminFrames, 'workspaces'))
+      const memberWorkspace = JSON.stringify(streamValue(memberFrames, 'workspaces'))
+      expect(adminWorkspace).toContain(adminProject.path)
+      expect(adminWorkspace).not.toContain(memberProject.path)
+      expect(memberWorkspace).toContain(memberProject.path)
+      expect(memberWorkspace).not.toContain(adminProject.path)
+
+      const adminControl = JSON.stringify(streamValue(adminFrames, 'control'))
+      const memberControl = JSON.stringify(streamValue(memberFrames, 'control'))
+      expect(adminControl).toContain(adminSession.sessionId)
+      expect(adminControl).not.toContain(memberSession.sessionId)
+      expect(memberControl).toContain(memberSession.sessionId)
+      expect(memberControl).not.toContain(adminSession.sessionId)
+      const userHome = (frames: ReadonlyMap<string, Readonly<Record<string, unknown>>>): string => {
+        const host = streamValue(frames, 'events').host
+        if (typeof host !== 'object' || host === null || typeof Reflect.get(host, 'home') !== 'string') {
+          throw new Error('Remote event ready frame omitted the user home')
+        }
+        return Reflect.get(host, 'home') as string
+      }
+      expect(await realpath(userHome(adminFrames))).toBe(await realpath(dirname(dirname(adminProject.path))))
+      expect(await realpath(userHome(memberFrames))).toBe(await realpath(dirname(dirname(memberProject.path))))
+
+      const foreign = await openingStreamFrames(firstUrl.origin, memberCookie, [{
+        id: 'foreign-session',
+        endpoint: 'session/follow',
+        args: { request: { address: { kind: 'session', sessionId: adminSession.sessionId } } },
+      }])
+      expect(foreign.get('foreign-session')).toMatchObject({
+        type: 'error', error: { code: 'not-found' },
+      })
+
       const ordinarySettings = await describeSettings(port, firstUrl.host, memberCookie)
       expect(ordinarySettings.status).toBe(200)
       expect(JSON.parse(ordinarySettings.body) as unknown).toMatchObject({

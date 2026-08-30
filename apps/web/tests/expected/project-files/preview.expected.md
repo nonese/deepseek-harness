@@ -9,23 +9,27 @@
     - button "Alpha workspace":
       - img
       - text: Alpha workspace
+  - text: "Upload to: Alpha workspace"
+  - button "Upload files":
+    - img
+    - text: Upload files
   - region "File list":
     - button "src":
       - img
       - text: src
-    - text: — 8/29, {{clock}} PM
+    - text: — {{clock}}
     - link "archive.bin":
       - /url: /auth/{{workspace}}/{{uuid}}/files/download?path=archive.bin
       - img
       - text: archive.bin
-    - text: 3 B 8/29, {{clock}} PM
+    - text: 3 B {{clock}}
     - link "Download archive.bin":
       - /url: /auth/{{workspace}}/{{uuid}}/files/download?path=archive.bin
       - img
     - button "README.md" [pressed]:
       - img
       - text: README.md
-    - text: 40 B 8/29, {{clock}} PM
+    - text: 40 B {{clock}}
     - link "Download README.md":
       - /url: /auth/{{workspace}}/{{uuid}}/files/download?path=README.md
       - img

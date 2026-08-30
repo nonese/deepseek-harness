@@ -27,13 +27,13 @@ kind: "package-reference"
 
 ### 路由
 
-`GET /auth/session`、`POST /auth/login/local`、`GET /auth/oidc/start`、`GET /auth/oidc/callback` 与 `POST /auth/logout` 管理浏览器会话。OIDC 使用 Authorization Code、PKCE S256、state、nonce、提供方发现，以及通过轮换 JWKS 完成的签名 ID Token 验证。待完成流程只保存在进程内存中，生命周期为十分钟，并绑定一个匹配的 `HttpOnly`、`SameSite=Lax` 临时 Cookie；回调重放不能再次签发会话。若提供方的授权码 token 端点随有效 token 响应返回 HTTP 201，则可启用 `oidcTokenEndpointCreatedCompatibility`；其默认值 `false` 保留标准的 HTTP 200 要求。已认证用户只能列出并创建自己生成数据根目录下的项目。`GET /auth/projects/:id/files` 列出一个项目相对目录，`/preview` 返回大小受限的 UTF-8 文本，`/download` 以附件方式流式传输一个普通文件。每条文件路由都只会在当前已认证用户的受管 workspace 中解析项目 ID，拒绝路径越界和符号链接，并省略隐藏条目。`GET` 与 `PATCH /auth/preferences` 只公开和修改当前用户是否启用统一 DeepSeek 凭据；管理员凭据不存在时，启用操作会失败。
+`GET /auth/session`、`POST /auth/login/local`、`GET /auth/oidc/start`、`GET /auth/oidc/callback` 与 `POST /auth/logout` 管理浏览器会话。OIDC 使用 Authorization Code、PKCE S256、state、nonce、提供方发现，以及通过轮换 JWKS 完成的签名 ID Token 验证。待完成流程只保存在进程内存中，生命周期为十分钟，并绑定一个匹配的 `HttpOnly`、`SameSite=Lax` 临时 Cookie；回调重放不能再次签发会话。若提供方的授权码 token 端点随有效 token 响应返回 HTTP 201，则可启用 `oidcTokenEndpointCreatedCompatibility`；其默认值 `false` 保留标准的 HTTP 200 要求。已认证用户只能列出并创建自己生成数据根目录下的项目。`GET /auth/projects/:id/files` 列出一个项目相对目录，`/preview` 返回大小受限的 UTF-8 文本，`/download` 以附件方式流式传输一个普通文件，`PUT /upload` 则把一个文件流式写入所选目录且不替换同名文件。每条文件路由都只会在当前已认证用户的受管 workspace 中解析项目 ID，拒绝路径越界和符号链接，并省略隐藏条目。`GET` 与 `PATCH /auth/preferences` 只公开和修改当前用户是否启用统一 DeepSeek 凭据；管理员凭据不存在时，启用操作会失败。
 
-`projectFileMaxEntries` 限制单次目录响应，默认为 1,000 个可见条目。`projectFilePreviewMaxBytes` 限制单次文本预览，默认为 512 KiB；下载保持流式传输，不会整体缓冲到应用内存。
+`projectFileMaxEntries` 限制单次目录响应，默认为 1,000 个可见条目。`projectFilePreviewMaxBytes` 限制单次文本预览，默认为 512 KiB。`projectFileUploadMaxBytes` 限制单文件流式上传，默认为 50 MiB；下载和上传都保持流式传输，不会整体缓冲到应用内存。
 
 管理员可以读取实际生效的进程、存储、认证、隔离、请求限制与统一模型状态，列出用户元数据，创建本地用户，修改角色或状态并重置本地密码。`PUT /auth/system/oidc` 保存 issuer、client id、redirect URI、scopes、客户端鉴权方式、可选的内网 HTTP 例外和首次登录管理员组。提交的客户端密钥通过现有 credentials 提供方写入 `HARNESS_OIDC_CLIENT_SECRET`，绝不回传。`POST /auth/system/oidc/test` 在不签发令牌的前提下验证已保存的发现文档。`PUT` 与 `DELETE /auth/system/shared-deepseek` 用于替换或移除专用统一模型凭据。管理响应只公开是否配置和是否可写，绝不返回提交或已存储的密钥，也不会返回用户项目或会话内容。
 
-在已认证的 Web 组合中，本插件会注册唯一的 Connection 认证器和有序 Typert Gateway 中间件。认证器校验持久 Cookie，并为 HTTP 与 WebSocket 分发提供请求主体；中间件过滤用户拥有的会话、workspace、Host 信息、列表与 stream，并拒绝普通用户访问管理员命名空间。独立的单调执行守卫保护每个 `cordis_*` 工具：它在每次调用时从调用 Agent 的程序管理项目路径解析当前所有者；没有 Agent、没有受管所有者、所有者为普通用户或已被降级的调用都会在工具主体前失败。
+在已认证的 Web 组合中，本插件会注册唯一的 Connection 认证器和有序 Typert Gateway 中间件。认证器校验持久 Cookie，并为 HTTP 与 WebSocket 分发提供请求主体；每条已接受的多路复用 WebSocket 都为所有逻辑流保留这份授权。中间件在缺少当前用户身份时关闭访问，过滤用户拥有的 Session、Workspace、Host 信息、列表与 stream，并拒绝普通用户访问管理员命名空间。独立的单调执行守卫保护每个 `cordis_*` 工具：它在每次调用时从调用 Agent 的程序管理项目路径解析当前所有者；没有 Agent、没有受管所有者、所有者为普通用户或已被降级的调用都会在工具主体前失败。
 
 不透明 Cookie 使用 `HttpOnly` 和 `SameSite=Lax`，并可启用 `Secure`。可变更路由会拒绝不匹配的 `Origin`、限制 JSON 请求体大小并返回稳定错误码。issuer 和回调地址默认必须使用 HTTPS，只有管理员显式启用纯内网 HTTP 例外后才可使用 HTTP。OIDC 声明只通过已验证的 issuer 与 subject 创建或恢复账号；首选用户名不能接管已有本地账号。配置的管理员组只在外部身份首次创建时生效，此后的角色变更由 Harness 管理员负责。
 

@@ -219,6 +219,57 @@ describe('HarnessPortal administrator navigation', () => {
     expect(getByText('Harness runtime')).toBeTruthy()
   })
 
+  it('uploads files into the current project folder and reports name conflicts', async () => {
+    const project = {
+      id: 'workspace-1',
+      name: '课件项目',
+      path: '/srv/harness/project',
+      sessionCount: 0,
+      createdAt: 0,
+      updatedAt: 0,
+    }
+    let uploaded = false
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      if (path === '/auth/projects') return jsonResponse({ projects: [project] })
+      if (path === '/auth/projects/workspace-1/files') {
+        return jsonResponse({
+          directory: {
+            path: '',
+            entries: uploaded
+              ? [{ name: '教案.docx', path: '教案.docx', kind: 'file', size: 4, updatedAt: 0, previewable: false }]
+              : [],
+          },
+        })
+      }
+      if (path === '/auth/projects/workspace-1/files/upload?name=%E6%95%99%E6%A1%88.docx') {
+        expect(init?.method).toBe('PUT')
+        expect(init?.body).toBeInstanceOf(File)
+        if (uploaded) return jsonResponse({ error: { message: '同名文件已存在，请先更名' } }, 409)
+        uploaded = true
+        return jsonResponse({ file: { name: '教案.docx' } }, 201)
+      }
+      throw new Error(`unexpected request: ${path}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { container, getByRole, getByText } = mount(member)
+    await waitFor(() => { expect(getByText('课件项目')).toBeTruthy() })
+    fireEvent.click(getByRole('button', { name: '文件' }))
+    await waitFor(() => { expect(getByText('这个文件夹还是空的。')).toBeTruthy() })
+    const input = container.querySelector('input[type="file"]')
+    if (!(input instanceof HTMLInputElement)) throw new Error('project upload input is missing')
+    const file = new File(['docx'], '教案.docx', {
+      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    })
+    fireEvent.change(input, { target: { files: [file] } })
+    await waitFor(() => { expect(getByText('已上传 1 个文件。')).toBeTruthy() })
+    await waitFor(() => { expect(getByText('教案.docx')).toBeTruthy() })
+
+    fireEvent.change(input, { target: { files: [file] } })
+    await waitFor(() => { expect(getByRole('alert').textContent).toBe('同名文件已存在，请先更名') })
+  })
+
   it('renders text preview and localized list and preview failures', async () => {
     const project = {
       id: 'workspace-1',

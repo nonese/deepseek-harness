@@ -5,4 +5,5 @@
   - menuitem "PTC mode All Standard mode capabilities, with tools exposed through the PTC mode SDK so the model can combine multi-step operations in one TypeScript program."
   - menuitem "Minimal mode Two-tool coding agent with persistent bash and str_replace_editor."
   - menuitem "Creator mode Built for creating custom agent presets, with all Standard mode capabilities plus runtime inspection, plugin experiments, and preset-authoring guidance."
+  - menuitem "教师模式 面向备课、教案、课件和教学数据处理；具备标准模式能力，并可直接生成 Word、PowerPoint 和 Excel 文件。"
   - menuitem "Refusing mode Resolves, then refuses to start."

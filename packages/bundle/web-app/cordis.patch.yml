@@ -49,6 +49,11 @@
     - id: code-runtime
       name: '@deepseek-ai/dsh-code-runtime-worker-thread'
 
+    # Workspace-confined Word, PowerPoint, and Excel generation. Presets decide
+    # whether their agents receive the model-facing creation tools.
+    - id: document-artifacts
+      name: '@deepseek-ai/dsh-artifacts-local'
+
     - id: message-feedback
       name: '@deepseek-ai/dsh-message-feedback'
       config:

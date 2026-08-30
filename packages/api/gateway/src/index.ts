@@ -114,6 +114,21 @@ type ConnectionRpcResult = Awaited<ReturnType<ConnectionRpcHandler>>
 type ConnectionRpcError = Extract<ConnectionRpcResult, { readonly ok: false }>['error']
 const NEVER_ABORTED_SIGNAL = new AbortController().signal
 const DEFAULT_WEBSOCKET_HEARTBEAT_INTERVAL_MS = 30_000
+const remoteEventDeliveryDelegates = new WeakMap<object, () => void>()
+
+/**
+ * Delegate one projected Remote Event waterfall without exposing it to the Client.
+ * @param frame - candidate waterfall frame received by Remote stream middleware.
+ * @returns whether the frame represented one active Client delivery.
+ */
+export function delegateRemoteEventDelivery(frame: unknown): boolean {
+  if (!isObject(frame)) return false
+  const delegate = remoteEventDeliveryDelegates.get(frame)
+  if (delegate === undefined) return false
+  remoteEventDeliveryDelegates.delete(frame)
+  delegate()
+  return true
+}
 
 /** Gateway transport configuration. */
 export interface Config {
@@ -240,7 +255,7 @@ export class TypertGatewayService extends Service implements TypertGateway {
               rejectRemoteStreamUpgrade(socket, authorization)
               return
             }
-            authorization.run(() => { mux.handleUpgrade(req, socket, head) })
+            mux.handleUpgrade(req, socket, head, authorization)
           },
         }
         const unregister = webCtx.webServer.registerUpgrade(route)
@@ -562,7 +577,16 @@ export class TypertGatewayService extends Service implements TypertGateway {
   private deliverRemoteEvent(pending: PendingRemoteEvent, client: RemoteEventClient): void {
     pending.deliveries.add(client)
     client.deliveries.set(pending.id, pending)
-    client.queue.push(pending.frame)
+    const frame = { ...pending.frame }
+    remoteEventDeliveryDelegates.set(frame, () => {
+      if (this.pendingRemoteEvents.get(pending.id) !== pending
+        || !pending.deliveries.has(client)) return
+      this.removeRemoteEventDelivery(pending, client)
+      if (pending.deliveries.size === 0) {
+        this.settleRemoteEvent(pending, { kind: 'next' })
+      }
+    })
+    client.queue.push(frame)
   }
 
   private receiveRemoteEventResult(

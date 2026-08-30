@@ -54,6 +54,7 @@ harness 由 `packages/` 下的 npm 包组装而成，按能力系列分组：会
 | [`webhook/`](webhook/README.zh.md) | 已验证外部事件、受信规则与即发即弃 Workspace Session |
 | [`web/`](web/README.zh.md) | Web 能力系列：seam、搜索/获取提供方、面向模型的 Web 工具 |
 | [`attachment/`](attachment/README.zh.md) | 持久附件标识、校验、本地内容寻址存储 |
+| [`document/`](document/README.zh.md) | 限定在 workspace 内的 Word、PowerPoint 与 Excel 产物生成 |
 | [`spill/`](spill/README.zh.md) | spill 能力系列：存储 seam、本地实现、工具结果 spill 策略 |
 | [`todo/`](todo/README.zh.md) | 面向模型的 `todo_write` 工具 |
 | [`plan/`](plan/README.zh.md) | Plan 协作状态，提供直接进入命令与经评审的退出 |

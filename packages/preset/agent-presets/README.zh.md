@@ -33,6 +33,8 @@ kind: "package-reference"
 
 可选的 preset 来自两处：本包 `presets/` 下随包交付的 preset，以及你自己放在 `<dshHome>/.agent-presets` 下的 preset。选择器会展示每个 preset 的显示名与描述；组装无法加载的 preset 会连同原因一起列出而不是被隐藏，因此你能看到该修什么或删什么。
 
+随包 roster 包含 `teacher`（教师模式）：保留标准 agent 能力，并增加教学 persona 与 Word、PowerPoint、Excel 创建工具，用于教案、课堂课件、讲义、成绩表及其他结构化教学材料。文档生成器仍是一个宿主服务；选择教师模式只会改变该会话的工具与提示词组装。
+
 ### 最小配置
 
 插件需要一个 `default` preset id，并在 `roots` 中扫描 preset：

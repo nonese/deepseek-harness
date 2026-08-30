@@ -2,7 +2,7 @@
 
 import { createHash, createSign, generateKeyPairSync } from 'node:crypto'
 import { createServer, request as httpRequest, type Server } from 'node:http'
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -182,6 +182,7 @@ interface BootOptions {
   readonly projectFileMaxEntries?: number
   readonly projectFilePreviewMaxBytes?: number
   readonly oidcTokenEndpointCreatedCompatibility?: boolean
+  readonly projectFileUploadMaxBytes?: number
 }
 
 interface BootResult {
@@ -217,6 +218,7 @@ async function boot(options: BootOptions = {}): Promise<BootResult> {
     `    projectFileMaxEntries: ${String(options.projectFileMaxEntries ?? 1_000)}`,
     `    projectFilePreviewMaxBytes: ${String(options.projectFilePreviewMaxBytes ?? 512 * 1024)}`,
     `    oidcTokenEndpointCreatedCompatibility: ${String(options.oidcTokenEndpointCreatedCompatibility ?? false)}`,
+    `    projectFileUploadMaxBytes: ${String(options.projectFileUploadMaxBytes ?? 50 * 1024 * 1024)}`,
     '',
   ].join('\n'))
 
@@ -325,6 +327,32 @@ async function postWithoutHost(origin: string, path: string, requestOrigin: stri
   })
 }
 
+async function putChunked(
+  targetUrl: URL,
+  cookie: string,
+  chunks: readonly Uint8Array[],
+): Promise<{ status: number; body: unknown }> {
+  return await new Promise((resolveResponse, reject) => {
+    const req = httpRequest({
+      hostname: targetUrl.hostname,
+      port: targetUrl.port,
+      path: `${targetUrl.pathname}${targetUrl.search}`,
+      method: 'PUT',
+      headers: { cookie, origin: targetUrl.origin, 'content-type': 'application/octet-stream' },
+    }, (res) => {
+      const body: Uint8Array[] = []
+      res.on('data', (chunk: Uint8Array) => body.push(chunk))
+      res.once('end', () => {
+        const text = Buffer.concat(body).toString('utf8')
+        resolveResponse({ status: res.statusCode ?? 0, body: text.length === 0 ? undefined : JSON.parse(text) })
+      })
+    })
+    req.once('error', reject)
+    for (const chunk of chunks) req.write(chunk)
+    req.end()
+  })
+}
+
 describe('real authentication route composition', () => {
   it('keeps the plugin graph behind local login and exposes admin metadata only after authentication', { timeout: 60_000 }, async () => {
     const { context, origin } = await boot()
@@ -391,6 +419,7 @@ describe('real authentication route composition', () => {
         maxBodyBytes: 64 * 1024,
         projectFileMaxEntries: 1_000,
         projectFilePreviewMaxBytes: 512 * 1024,
+        projectFileUploadMaxBytes: 50 * 1024 * 1024,
       },
     })
 
@@ -474,7 +503,7 @@ describe('real authentication route composition', () => {
   })
 
   it('browses, previews, and downloads only the authenticated user project files', { timeout: 60_000 }, async () => {
-    const { origin } = await boot()
+    const { origin } = await boot({ projectFileUploadMaxBytes: 1_024 })
     const adminCookie = await localLogin(origin)
     expect((await fetch(`${origin}/auth/projects/missing/files`)).status).toBe(401)
 
@@ -537,6 +566,73 @@ describe('real authentication route composition', () => {
       directory: { path: 'src', entries: [{ name: 'main.ts', path: 'src/main.ts', previewable: true }] },
     })
 
+    const upload = new URL(`${adminFiles}/upload`)
+    upload.searchParams.set('path', 'src')
+    upload.searchParams.set('name', '教案.md')
+    const uploaded = await fetch(upload, {
+      method: 'PUT',
+      headers: { cookie: adminCookie, origin, 'content-type': 'text/markdown' },
+      body: '# 课程教案\n',
+    })
+    expect(uploaded.status).toBe(201)
+    expect(await uploaded.json()).toMatchObject({
+      file: { name: '教案.md', path: 'src/教案.md', kind: 'file', previewable: true },
+    })
+    const uploadedPreview = new URL(`${adminFiles}/preview`)
+    uploadedPreview.searchParams.set('path', 'src/教案.md')
+    expect(await (await fetch(uploadedPreview, { headers: { cookie: adminCookie } })).json()).toMatchObject({
+      preview: { content: '# 课程教案\n' },
+    })
+
+    const chunkedUpload = new URL(`${adminFiles}/upload`)
+    chunkedUpload.searchParams.set('name', 'chunked.txt')
+    const chunked = await putChunked(chunkedUpload, adminCookie, [Buffer.from('chunked '), Buffer.from('upload\n')])
+    expect(chunked).toMatchObject({ status: 201, body: { file: { name: 'chunked.txt', size: 15 } } })
+
+    const conflict = new URL(`${adminFiles}/upload`)
+    conflict.searchParams.set('name', 'README.md')
+    const conflictResponse = await fetch(conflict, {
+      method: 'PUT', headers: { cookie: adminCookie, origin }, body: 'must not overwrite\n',
+    })
+    expect(conflictResponse.status).toBe(409)
+    expect(await conflictResponse.json()).toMatchObject({ error: { code: 'FILE_CONFLICT' } })
+    expect(await readFile(join(adminProject.project.path, 'README.md'), 'utf8')).toBe('# Managed project\n\nPrivate preview.\n')
+
+    for (const { name, path } of [
+      { name: '.hidden.txt', path: '' },
+      { name: 'nested/file.txt', path: '' },
+      { name: 'file.txt', path: 'README.md' },
+    ]) {
+      const invalidUpload = new URL(`${adminFiles}/upload`)
+      invalidUpload.searchParams.set('name', name)
+      if (path !== '') invalidUpload.searchParams.set('path', path)
+      expect((await fetch(invalidUpload, {
+        method: 'PUT', headers: { cookie: adminCookie, origin }, body: 'invalid\n',
+      })).status, `${path}/${name}`).toBe(400)
+    }
+    const oversizedUpload = new URL(`${adminFiles}/upload`)
+    oversizedUpload.searchParams.set('name', 'oversized.bin')
+    expect((await fetch(oversizedUpload, {
+      method: 'PUT', headers: { cookie: adminCookie, origin }, body: Buffer.alloc(1_025),
+    })).status).toBe(400)
+    const oversizedChunked = new URL(`${adminFiles}/upload`)
+    oversizedChunked.searchParams.set('name', 'oversized-chunked.bin')
+    expect((await putChunked(oversizedChunked, adminCookie, [Buffer.alloc(600), Buffer.alloc(600)])).status).toBe(400)
+
+    const missingName = new URL(`${adminFiles}/upload`)
+    expect((await fetch(missingName, {
+      method: 'PUT', headers: { cookie: adminCookie, origin }, body: 'missing name',
+    })).status).toBe(400)
+    const longName = new URL(`${adminFiles}/upload`)
+    longName.searchParams.set('name', `${'x'.repeat(252)}.txt`)
+    expect((await fetch(longName, {
+      method: 'PUT', headers: { cookie: adminCookie, origin }, body: 'long name',
+    })).status).toBe(400)
+    expect((await fetch(upload, { headers: { cookie: adminCookie } })).status).toBe(405)
+    expect((await fetch(adminFiles, {
+      method: 'PUT', headers: { cookie: adminCookie, origin }, body: 'wrong operation',
+    })).status).toBe(405)
+
     const markdownPreview = new URL(`${adminFiles}/preview`)
     markdownPreview.searchParams.set('path', 'README.md')
     expect(await (await fetch(markdownPreview, { headers: { cookie: adminCookie } })).json()).toMatchObject({
@@ -586,8 +682,13 @@ describe('real authentication route composition', () => {
 
     expect((await fetch(memberFiles, { headers: { cookie: adminCookie } })).status).toBe(404)
     expect((await fetch(adminFiles, { headers: { cookie: memberCookie } })).status).toBe(404)
+    const memberUpload = new URL(`${memberFiles}/upload`)
+    memberUpload.searchParams.set('name', 'member-upload.txt')
+    expect((await fetch(memberUpload, {
+      method: 'PUT', headers: { cookie: memberCookie, origin }, body: 'member upload\n',
+    })).status).toBe(201)
     expect(await (await fetch(memberFiles, { headers: { cookie: memberCookie } })).json()).toMatchObject({
-      directory: { entries: [{ name: 'member.txt' }] },
+      directory: { entries: [{ name: 'member-upload.txt' }, { name: 'member.txt' }] },
     })
   })
 

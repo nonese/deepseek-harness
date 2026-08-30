@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import {
   IconChevronRightOutline14,
   IconCloseOutline16,
@@ -6,6 +6,7 @@ import {
   IconDownloadOutline16,
   IconFolderClose16,
   IconFolderOpenOutline16,
+  IconPlusOutline16,
   MarkdownText,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { WebTranslate } from './locales.ts'
@@ -53,9 +54,15 @@ async function requestJson<T>(path: string, signal: AbortSignal, t: WebTranslate
   return body as T
 }
 
-function projectFileUrl(projectId: string, operation: '' | 'preview' | 'download', path: string): string {
+function projectFileUrl(
+  projectId: string,
+  operation: '' | 'preview' | 'download' | 'upload',
+  path: string,
+  name?: string,
+): string {
   const query = new URLSearchParams()
   if (path !== '') query.set('path', path)
+  if (name !== undefined) query.set('name', name)
   const suffix = operation === '' ? '' : `/${operation}`
   const encodedQuery = query.toString()
   return `/auth/projects/${encodeURIComponent(projectId)}/files${suffix}${encodedQuery === '' ? '' : `?${encodedQuery}`}`
@@ -97,6 +104,12 @@ export function ProjectFileBrowser({ project, onClose, t }: {
   const [preview, setPreview] = useState<ProjectPreviewResponse['preview']>()
   const [previewing, setPreviewing] = useState(false)
   const [previewError, setPreviewError] = useState<string>()
+  const [listingRevision, setListingRevision] = useState(0)
+  const [uploading, setUploading] = useState(false)
+  const [uploadMessage, setUploadMessage] = useState<string>()
+  const [uploadError, setUploadError] = useState<string>()
+  const uploadInput = useRef<HTMLInputElement>(null)
+  const uploadController = useRef<AbortController>()
 
   useEffect(() => {
     const controller = new AbortController()
@@ -116,7 +129,7 @@ export function ProjectFileBrowser({ project, onClose, t }: {
         if (!controller.signal.aborted) setListing(false)
       })
     return () => { controller.abort() }
-  }, [currentPath, project.id, t])
+  }, [currentPath, listingRevision, project.id, t])
 
   useEffect(() => {
     if (selected === undefined || !selected.previewable) return
@@ -147,6 +160,8 @@ export function ProjectFileBrowser({ project, onClose, t }: {
     return () => { removeEventListener('keydown', closeOnEscape) }
   }, [onClose])
 
+  useEffect(() => () => { uploadController.current?.abort() }, [])
+
   const breadcrumbs = useMemo(() => {
     const segments = currentPath === '' ? [] : currentPath.split('/')
     return segments.map((name, index) => ({ name, path: segments.slice(0, index + 1).join('/') }))
@@ -160,7 +175,51 @@ export function ProjectFileBrowser({ project, onClose, t }: {
   }), [t])
 
   const navigate = (path: string): void => {
-    if (path !== currentPath) setCurrentPath(path)
+    if (path !== currentPath) {
+      setUploadMessage(undefined)
+      setUploadError(undefined)
+      setCurrentPath(path)
+    }
+  }
+
+  const uploadFiles = async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const files = Array.from(event.currentTarget.files ?? [])
+    event.currentTarget.value = ''
+    if (files.length === 0) return
+    const controller = new AbortController()
+    uploadController.current?.abort()
+    uploadController.current = controller
+    setUploading(true)
+    setUploadMessage(undefined)
+    setUploadError(undefined)
+    let uploaded = 0
+    try {
+      for (const file of files) {
+        const response = await fetch(projectFileUrl(project.id, 'upload', currentPath, file.name), {
+          method: 'PUT',
+          credentials: 'same-origin',
+          headers: { 'content-type': file.type || 'application/octet-stream' },
+          body: file,
+          signal: controller.signal,
+        })
+        const body: unknown = await response.json().catch(() => ({}))
+        if (!response.ok) {
+          throw new Error((body as ApiErrorBody).error?.message
+            ?? t('projectFiles.requestFailure', { status: response.status }))
+        }
+        uploaded += 1
+      }
+      setUploadMessage(t('projectFiles.uploadComplete', { count: uploaded }))
+      setListingRevision(value => value + 1)
+    } catch (reason) {
+      if (!(reason instanceof DOMException && reason.name === 'AbortError')) {
+        setUploadError(errorMessage(reason))
+        if (uploaded > 0) setListingRevision(value => value + 1)
+      }
+    } finally {
+      if (uploadController.current === controller) uploadController.current = undefined
+      if (!controller.signal.aborted) setUploading(false)
+    }
   }
 
   return (
@@ -195,6 +254,33 @@ export function ProjectFileBrowser({ project, onClose, t }: {
             </span>
           ))}
         </nav>
+
+        <div className={css.toolbar}>
+          <span>{t('projectFiles.uploadDestination', { path: currentPath === '' ? project.name : currentPath })}</span>
+          <input
+            ref={uploadInput}
+            className={css.uploadInput}
+            type="file"
+            multiple
+            aria-label={t('projectFiles.chooseUpload')}
+            onChange={(event) => { void uploadFiles(event) }}
+          />
+          <button
+            className={css.uploadButton}
+            type="button"
+            disabled={uploading}
+            onClick={() => { uploadInput.current?.click() }}
+          >
+            <IconPlusOutline16 size={16} />
+            {uploading ? t('projectFiles.uploading') : t('projectFiles.upload')}
+          </button>
+        </div>
+        {(uploadMessage !== undefined || uploadError !== undefined) && (
+          <div className={uploadError === undefined ? css.uploadStatus : `${css.uploadStatus} ${css.uploadStatusError}`}
+            role={uploadError === undefined ? 'status' : 'alert'}>
+            {uploadError ?? uploadMessage}
+          </div>
+        )}
 
         <div className={css.content}>
           <section className={css.filePane} aria-label={t('projectFiles.list')}>
