@@ -477,14 +477,22 @@ function managedSiteBaseURL(value: string): string {
   return parsed.href.replace(/\/+$/u, '')
 }
 
+// OpenAI-compatible gateways treat a model id as an opaque JSON string; an
+// interior space is valid and never enters command or path syntax.
+function validManagedSiteModelId(value: string): boolean {
+  return value.length > 0
+    && value.length <= 128
+    && !/[\u0000-\u001f\u007f]/u.test(value)
+}
+
 function managedSiteModels(values: string[]): string[] {
   const models = [...new Set(values.map(value => value.normalize('NFKC').trim()))]
   if (models.length === 0 || models.length > MAX_MANAGED_SITE_MODELS) {
     throw new AuthError('INVALID_INPUT', `每个站点必须配置 1–${String(MAX_MANAGED_SITE_MODELS)} 个模型`)
   }
   for (const model of models) {
-    if (model.length === 0 || model.length > 128 || /\s/u.test(model) || /[\u0000-\u001f\u007f]/u.test(model)) {
-      throw new AuthError('INVALID_INPUT', '模型 ID 必须为 1–128 个不含空白或控制字符的字符')
+    if (!validManagedSiteModelId(model)) {
+      throw new AuthError('INVALID_INPUT', '模型 ID 规范化后必须为 1–128 个不含控制字符的字符')
     }
   }
   return models
@@ -1111,7 +1119,7 @@ export function apply(ctx: Context, config: Config = {}): void {
             ...apiKey === undefined ? {} : { apiKey },
           })
           const models = discovered
-            .filter(model => model.id.length <= 128 && !/\s|[\u0000-\u001f\u007f]/u.test(model.id))
+            .filter(model => model.id === model.id.trim() && validManagedSiteModelId(model.id))
             .map(model => ({ id: model.id, name: model.name ?? model.id }))
           if (models.length === 0) throw new AuthError('INVALID_INPUT', '该站点没有返回可用模型')
           sendJson(res, 200, { models })

@@ -242,8 +242,12 @@ async function boot(options: BootOptions = {}): Promise<BootResult> {
         async discoverModels(settingsNs: string, request: Record<string, unknown>) {
           modelDiscoveryRequests.push({ settingsNs, request: structuredClone(request) })
           return [
+            { id: 'MiniMax M3' },
             { id: 'deepseek-chat', name: 'DeepSeek Chat' },
             { id: 'gpt-4.1-mini' },
+            { id: ' leading-space' },
+            { id: 'control\ncharacter' },
+            { id: 'x'.repeat(129) },
           ]
         },
       } as never)
@@ -539,6 +543,7 @@ describe('real authentication route composition', () => {
     const discoveryBody = await discovery.json() as { models: Array<{ id: string; name: string }> }
     expect(discoveryBody).toEqual({
       models: [
+        { id: 'MiniMax M3', name: 'MiniMax M3' },
         { id: 'deepseek-chat', name: 'DeepSeek Chat' },
         { id: 'gpt-4.1-mini', name: 'gpt-4.1-mini' },
       ],
@@ -558,7 +563,7 @@ describe('real authentication route composition', () => {
       body: JSON.stringify({
         name: '校内 New API',
         baseURL: 'https://new-api.example.test/v1/',
-        models: ['deepseek-chat', 'gpt-4.1-mini'],
+        models: ['MiniMax M3', 'deepseek-chat', 'gpt-4.1-mini'],
         apiKey: customKey,
       }),
     })
@@ -575,7 +580,7 @@ describe('real authentication route composition', () => {
             id: customSite?.id,
             name: '校内 New API',
             baseURL: 'https://new-api.example.test/v1',
-            models: [{ id: 'deepseek-chat' }, { id: 'gpt-4.1-mini' }],
+            models: [{ id: 'MiniMax M3' }, { id: 'deepseek-chat' }, { id: 'gpt-4.1-mini' }],
             configured: true,
           },
         ],

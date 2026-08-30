@@ -79,6 +79,7 @@ describe('HarnessPortal administrator navigation', () => {
         })
         return jsonResponse({
           models: [
+            { id: 'MiniMax M3', name: 'MiniMax M3' },
             { id: 'deepseek-chat', name: 'DeepSeek Chat' },
             { id: 'gpt-4.1-mini', name: 'gpt-4.1-mini' },
           ],
@@ -89,7 +90,7 @@ describe('HarnessPortal administrator navigation', () => {
         expect(JSON.parse(init?.body as string)).toEqual({
           name: '校内 New API',
           baseURL: 'https://new-api.example.test/v1',
-          models: ['deepseek-chat', 'gpt-4.1-mini'],
+          models: ['MiniMax M3', 'deepseek-chat', 'gpt-4.1-mini'],
           apiKey: 'sk-custom-browser-secret',
         })
         return jsonResponse({
@@ -105,7 +106,11 @@ describe('HarnessPortal administrator navigation', () => {
               {
                 id: 'a1b2c3d4e5f6', kind: 'openai-compatible', provider: 'managed-a1b2c3d4e5f6',
                 name: '校内 New API', baseURL: 'https://new-api.example.test/v1',
-                models: [{ id: 'deepseek-chat', name: 'deepseek-chat' }, { id: 'gpt-4.1-mini', name: 'gpt-4.1-mini' }],
+                models: [
+                  { id: 'MiniMax M3', name: 'MiniMax M3' },
+                  { id: 'deepseek-chat', name: 'deepseek-chat' },
+                  { id: 'gpt-4.1-mini', name: 'gpt-4.1-mini' },
+                ],
                 configured: true, writable: true,
               },
             ],
@@ -202,9 +207,9 @@ describe('HarnessPortal administrator navigation', () => {
     fireEvent.change(getByPlaceholderText('例如：https://new-api.example.com/v1'), { target: { value: 'https://new-api.example.test/v1' } })
     fireEvent.change(getByPlaceholderText('输入该站点的 API Key'), { target: { value: 'sk-custom-browser-secret' } })
     await waitFor(() => {
-      expect(fetchMock.mock.calls.some(([input]) => input === '/auth/system/managed-models/discover')).toBe(true)
+      expect(getByRole('checkbox', { name: 'MiniMax M3' })).toBeTruthy()
     }, { timeout: 2_000 })
-    await waitFor(() => { expect(getByRole('checkbox', { name: /DeepSeek Chat/ })).toBeTruthy() }, { timeout: 2_000 })
+    fireEvent.click(getByRole('checkbox', { name: 'MiniMax M3' }))
     fireEvent.click(getByRole('checkbox', { name: /DeepSeek Chat/ }))
     fireEvent.click(getByRole('checkbox', { name: 'gpt-4.1-mini' }))
     fireEvent.click(getByRole('button', { name: '添加站点' }))
