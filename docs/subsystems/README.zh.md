@@ -35,6 +35,7 @@
 | [sandbox.md](sandbox.zh.md) | 每会话策略解析与进程约束 seam：文件效果模式、执行/提供方策略、`ConfinedArgv`、强制执行与故障关闭错误 |
 | [code-runtime.md](code-runtime.zh.md) | 代码执行 seam：`CodeRunRequest`/`Result`、绑定命名空间、捕获日志、`CodeRunFailure` 分类体系 |
 | [document-artifacts.md](document-artifacts.zh.md) | 限定在 workspace 内的 Word、PowerPoint 与 Excel 请求、结构校验、原子发布及面向模型的创建工具 |
+| [image-generation.md](image-generation.zh.md) | 提供方无关的图片请求、Dreamina 任务生命周期、限定在 workspace 内的 PNG 发布与面向模型的持久图片结果 |
 | [extensions.md](extensions.zh.md) | 带版本的动态 Cordis Plugin 与 Package、Host/Client 激活、审批、运行时检查和生命周期撤销 |
 | [filesystem.md](filesystem.zh.md) | 文件系统 seam：`FsTarget`、读/写/编辑结果、观测到的文件状态、`FsErrorCode` |
 | [lsp.md](lsp.zh.md) | LSP 导航 seam：`LspQueryRequest`/`Result`、`LspProvider`/`Service`、四种操作、`LspError` |

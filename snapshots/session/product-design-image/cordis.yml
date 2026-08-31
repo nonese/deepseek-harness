@@ -1,0 +1,41 @@
+# Product Design image generation through the shipped Dreamina provider. The
+# keyless replay patch replaces only that external provider with a deterministic
+# local implementation while preserving the public tool and attachment path.
+
+- id: agent-default-model
+  name: '@deepseek-ai/dsh-agent-default-model'
+  config:
+    provider: deepseek-official
+    model: deepseek-v4-flash-vision-exp
+
+- id: session-persistence-jsonl
+  name: '@deepseek-ai/dsh-session-persistence-jsonl'
+  config:
+    root: !!js dshHomePath('sessions')
+    compression: none
+
+- id: agent-instructions
+  name: '@deepseek-ai/dsh-agent-instructions'
+  config:
+    maxBytes: 65536
+
+- id: system-prompt
+  name: '@deepseek-ai/dsh-system-prompt'
+  config:
+    persona: |
+      You are a coding assistant powered by the {{model}} model. Your working directory is {{cwd}}. Your bash tool runs under a file sandbox — a `[sandbox: file access denied …]` result is policy, not a command bug.
+
+      Verify your work by running the code or tests. Keep answers brief and factual.
+
+- id: attachment-local
+  name: '@deepseek-ai/dsh-attachment-local'
+
+- insert:
+    - id: image-generation-dreamina
+      name: '@deepseek-ai/dsh-image-generation-dreamina'
+      config:
+        modelVersion: '4.0'
+        resolution: 2k
+
+    - id: tool-image-generation
+      name: '@deepseek-ai/dsh-tool-image-generation'

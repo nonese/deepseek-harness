@@ -35,6 +35,8 @@ kind: "package-reference"
 
 随包 roster 包含 `teacher`（教师模式）：保留标准 agent 能力，并增加教学 persona 与 Word、PowerPoint、Excel 创建工具，用于教案、课堂课件、讲义、成绩表及其他结构化教学材料。文档生成器仍是一个宿主服务；选择教师模式只会改变该会话的工具与提示词组装。
 
+随包 roster 还包含 `product-design`（产品设计模式）：保留标准 agent 能力，并增加产品设计 persona 与十个按工作区隔离的流程 skill，覆盖上下文、调研、审计、视觉构思、图片转代码、网址转代码、设计 QA 和显式分享。该 preset 不会伪造浏览器截图、图片生成或发布能力；这些阶段会使用另行安装的工具，或以明确的能力缺失结果停止。产品上下文保存在会话工作区的 `product-design/` 下。
+
 ### 最小配置
 
 插件需要一个 `default` preset id，并在 `roots` 中扫描 preset：

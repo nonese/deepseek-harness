@@ -1,0 +1,11 @@
+version: 1
+scenario: product-design-image
+profile: headless
+composition: product-design-image
+recording: authored
+header:
+  class: product-design-image
+  pin: true
+  systemPromptSource: read-image
+workspace:
+  final: true

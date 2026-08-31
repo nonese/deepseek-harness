@@ -43,6 +43,13 @@ import LocalJobRegistry from '@deepseek-ai/dsh-jobs-local'
 import * as ToolAskUser from '@deepseek-ai/dsh-tool-ask-user'
 import LocalDocumentArtifactRuntime from '@deepseek-ai/dsh-artifacts-local'
 import * as ToolDocumentArtifacts from '@deepseek-ai/dsh-tool-artifacts'
+import ImageGenerationRuntime from '@deepseek-ai/dsh-image-generation'
+import type {
+  ImageGenerationCollectRequest,
+  ImageGenerationRequest,
+  ImageGenerationResult,
+} from '@deepseek-ai/dsh-image-generation'
+import * as ToolImageGeneration from '@deepseek-ai/dsh-tool-image-generation'
 import * as ToolBash from '@deepseek-ai/dsh-tool-bash'
 import * as ToolPwsh from '@deepseek-ai/dsh-tool-pwsh'
 import * as ToolBashPersistent from '@deepseek-ai/dsh-tool-bash-persistent'
@@ -93,6 +100,17 @@ class CatalogAttachmentStore extends AttachmentStore {
 
   override readImage(_ref: ImageAttachmentRef): Promise<StoredImageAttachment> {
     return Promise.reject(new Error('gen-tool-catalog: attachment reads are unreachable during schema harvest'))
+  }
+}
+
+/** Image-generation seam marker used only to harvest the tool schemas. */
+class CatalogImageGenerationRuntime extends ImageGenerationRuntime {
+  override generate(_request: ImageGenerationRequest): Promise<ImageGenerationResult> {
+    return Promise.reject(new Error('gen-tool-catalog: image generation is unreachable during schema harvest'))
+  }
+
+  override collect(_request: ImageGenerationCollectRequest): Promise<ImageGenerationResult> {
+    return Promise.reject(new Error('gen-tool-catalog: image collection is unreachable during schema harvest'))
   }
 }
 
@@ -388,6 +406,27 @@ const TOOL_PACKAGES: ToolPackage[] = [
     },
     note:
       'create, edit, pause, and resume require direct-human root authority; complete and blocked also accept the exact current goal round. The default blocked lower bound is three admitted rounds.',
+  },
+  {
+    pkg: '@deepseek-ai/dsh-tool-image-generation',
+    dir: 'tool-image-generation',
+    source: 'packages/image/tool-image-generation/src/index.ts',
+    requires: [
+      'ctx.tools',
+      'ctx.imageGeneration',
+      'ctx.attachments',
+      'ctx.llm + an image-capable route at execution time',
+      'a calling Agent workspace',
+    ],
+    writes: ['tool/call', 'one workspace-relative .png file', 'durable image attachment', 'tool/result'],
+    async mount(ctx) {
+      await ctx.plugin(CatalogAttachmentStore)
+      await ctx.plugin(LlmRuntime)
+      await ctx.plugin(CatalogImageGenerationRuntime)
+      await ctx.plugin(ToolImageGeneration)
+    },
+    note:
+      'The shipped Product Design preset backs these tools with Dreamina image 4.0 at 2K. Generation is confined to the calling workspace, and a pending task is resumed through collect_generated_image instead of being submitted twice.',
   },
   {
     pkg: '@deepseek-ai/dsh-schedule',

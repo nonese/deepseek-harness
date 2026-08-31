@@ -29,6 +29,7 @@ This table connects model-visible tool names to the plugin package and service s
 | `@deepseek-ai/dsh-tool-fs-search` | `glob`, `grep` | `ctx.tools`, `ctx.subprocess`, `ctx.systemPrompt` | `tool/call`, `tool/result` | - | glob and grep are unconditional discovery tools that spawn the packaged ripgrep binary (`@vscode/ripgrep`) through ctx.subprocess as ordinary foreground calls (never background jobs) — no host `rg` install and no shell layer. The catalog uses `sampleOverCapGlobResults: true`; deployments must choose that behavior explicitly. Capped results save the complete formatted list through the optional ctx.spillStore backend; returned locators are follow-up-readable/searchable when the backend exposes local paths in co-located deployments. |
 | `@deepseek-ai/dsh-tool-terminal` | `terminal_close`, `terminal_list`, `terminal_open`, `terminal_read`, `terminal_send`, `terminal_signal` | `ctx.tools`, `ctx.terminals`, `ctx.systemPrompt`, `ctx.jobs at call time for run_in_background` | `tool/call`, `tool/result` | - | The six terminal tools are opt-in and complement one-shot shell/filesystem tools. `terminal_send(run_in_background: true)` registers with `ctx.jobs`; TUI, named key sequences, BEL, resize, auto-start, and cross-agent sharing are absent from the schema. |
 | `@deepseek-ai/dsh-tool-goal` | `create_goal`, `get_goal`, `update_goal` | `ctx.tools`, `ctx.agents`, `ctx.goals`, `ctx.systemPrompt`, `a calling Agent in an authorized open turn` | `tool/call`, `goal/change for mutations`, `tool/result` | - | create, edit, pause, and resume require direct-human root authority; complete and blocked also accept the exact current goal round. The default blocked lower bound is three admitted rounds. |
+| `@deepseek-ai/dsh-tool-image-generation` | `collect_generated_image`, `generate_image` | `ctx.tools`, `ctx.imageGeneration`, `ctx.attachments`, `ctx.llm + an image-capable route at execution time`, `a calling Agent workspace` | `tool/call`, `one workspace-relative .png file`, `durable image attachment`, `tool/result` | - | The shipped Product Design preset backs these tools with Dreamina image 4.0 at 2K. Generation is confined to the calling workspace, and a pending task is resumed through collect_generated_image instead of being submitted twice. |
 | `@deepseek-ai/dsh-schedule` | `schedule_create`, `schedule_delete`, `schedule_list` | `ctx.tools`, `ctx.sessions`, `Session persistence`, `a future live root Agent` | `tool/call`, `schedule/change create or delete`, `tool/result` | - | Registered only inside live root Agent scopes created after the opt-in Schedule plugin loads. Version 1 accepts after_seconds, explicit absolute at, and bounded fixed-rate every_seconds, and discloses session-local delivery; management reads and mutations require the shared Session persistence barrier. |
 | `@deepseek-ai/dsh-tool-lsp` | `lsp` | `ctx.tools`, `ctx.lsp`, `ctx.systemPrompt` | `tool/call`, `tool/result` | - | The lsp tool keeps provider selection and language-server subprocesses behind ctx.lsp, so its model-visible schema stays stable across providers. Requires a registered provider (e.g. `@deepseek-ai/dsh-lsp-stdio`) at runtime; without one, a query returns the structured `LSP_UNAVAILABLE` error rather than changing the schema. |
 | `@deepseek-ai/dsh-tool-ralph` | `ralph` | `ctx.tools`, `ctx.workflowEngine`, `ctx.subagents`, `ctx.systemPrompt`, `a calling Agent (exec.agent parents every fresh round)` | `tool/call`, `tool/result`, `workflow and child session events during execution` | - | A fixed foreground workflow starts one fresh structured child per round; the model selects only the immutable objective and an optional round cap. |
@@ -1414,6 +1415,87 @@ Update the exact current goal revision. edit, pause, and resume require a direct
 Source: [`packages/goal/tool-goal/src/index.ts`](../packages/goal/tool-goal/src/index.ts)
 
 create, edit, pause, and resume require direct-human root authority; complete and blocked also accept the exact current goal round. The default blocked lower bound is three admitted rounds.
+
+<a id="deepseek-aidsh-tool-image-generation"></a>
+
+## `@deepseek-ai/dsh-tool-image-generation`
+
+### `collect_generated_image`
+
+Resume one pending image-generation task and publish its PNG in the current project. Reuse exactly the task id and output path returned by generate_image; do not submit another generation merely because the first task is still processing.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "description": "Opaque task id returned by generate_image."
+    },
+    "output_path": {
+      "type": "string",
+      "description": "Project-relative .png path originally selected for the task."
+    },
+    "overwrite": {
+      "type": "boolean",
+      "description": "Replace an existing regular PNG at the same path."
+    }
+  },
+  "required": [
+    "task_id",
+    "output_path"
+  ]
+}
+```
+
+Source: [`packages/image/tool-image-generation/src/index.ts`](../packages/image/tool-image-generation/src/index.ts)
+
+### `generate_image`
+
+Generate one real PNG image in the current project through the configured image provider. The shipped Product Design mode uses Dreamina image 4.0 at 2K. Choose a measured aspect ratio and a project-relative .png output path; never use this tool for placeholder art.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "prompt": {
+      "type": "string",
+      "description": "Detailed visual prompt with subject, composition, palette, style, lighting, crop, density, and any required text."
+    },
+    "aspect_ratio": {
+      "type": "string",
+      "description": "Output aspect ratio selected for the measured asset slot.",
+      "enum": [
+        "21:9",
+        "16:9",
+        "3:2",
+        "4:3",
+        "1:1",
+        "3:4",
+        "2:3",
+        "9:16"
+      ]
+    },
+    "output_path": {
+      "type": "string",
+      "description": "Project-relative .png path; its parent directory must already exist."
+    },
+    "overwrite": {
+      "type": "boolean",
+      "description": "Replace an existing regular PNG at the same path."
+    }
+  },
+  "required": [
+    "prompt",
+    "aspect_ratio",
+    "output_path"
+  ]
+}
+```
+
+Source: [`packages/image/tool-image-generation/src/index.ts`](../packages/image/tool-image-generation/src/index.ts)
+
+The shipped Product Design preset backs these tools with Dreamina image 4.0 at 2K. Generation is confined to the calling workspace, and a pending task is resumed through collect_generated_image instead of being submitted twice.
 
 <a id="deepseek-aidsh-schedule"></a>
 

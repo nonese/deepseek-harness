@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/image/image-generation-dreamina/README.md
+README.md: 4c4f7dc0300b80417d6d85f92b25aa8998515410
+README.zh.md: 6b6c2256a23bbdc377215b578723064605a67e84

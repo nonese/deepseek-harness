@@ -1145,6 +1145,25 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'imageGeneration',
+    summary: 'Image-generation service.',
+    description: 'Image-generation service. Implementations validate provider output before publishing, confine `outputPath` below `cwd`, reject symbolic-link escapes, and serialize provider work when an account cannot safely process concurrent submissions.',
+    methods: [
+      {
+        signature: 'abstract generate(request: ImageGenerationRequest, signal?: AbortSignal): Promise<ImageGenerationResult>',
+        description: 'Submit one image and wait for the provider\'s configured foreground interval.',
+        parameters: [{ name: 'request', description: 'trusted workspace root plus model-authored prompt, ratio, and output path.' }, { name: 'signal', description: 'aborts provider work and publication.' }],
+        returns: 'a completed workspace image or a resumable pending task.',
+      },
+      {
+        signature: 'abstract collect(request: ImageGenerationCollectRequest, signal?: AbortSignal): Promise<ImageGenerationResult>',
+        description: 'Query and publish one previously submitted task.',
+        parameters: [{ name: 'request', description: 'trusted workspace root, prior task id, and output path.' }, { name: 'signal', description: 'aborts provider work and publication.' }],
+        returns: 'a completed workspace image or the still-pending task.',
+      },
+    ],
+  },
+  {
     key: 'inspector',
     summary: 'Shared Host/Client service façade over the realm\'s source publisher.',
     description: 'Shared Host/Client service façade over the realm\'s source publisher.',
@@ -4329,6 +4348,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface GrantRecord {\n    readonly kind: \'grant\';\n    readonly payload: unknown;\n}',
   },
   {
+    name: 'ImageAspectRatio',
+    declaration: 'export type ImageAspectRatio = \'21:9\' | \'16:9\' | \'3:2\' | \'4:3\' | \'1:1\' | \'3:4\' | \'2:3\' | \'9:16\';',
+  },
+  {
     name: 'ImageAttachmentLimits',
     declaration: 'export interface ImageAttachmentLimits {\n    maxImageBytes: number;\n    maxImagesPerMessage: number;\n    maxMessageImageBytes: number;\n    maxImagePixels: number;\n    maxImageDimension: number;\n    mediaTypes: readonly ImageMediaType[];\n}',
   },
@@ -4339,6 +4362,30 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ImageBlock',
     declaration: 'export interface ImageBlock {\n    type: \'image\';\n    attachment: ImageAttachmentRef;\n}',
+  },
+  {
+    name: 'ImageGenerationBase',
+    declaration: 'export interface ImageGenerationBase {\n    provider: string;\n    modelVersion: string;\n    resolution: string;\n    taskId: string;\n    creditCount?: number;\n}',
+  },
+  {
+    name: 'ImageGenerationCollectRequest',
+    declaration: 'export interface ImageGenerationCollectRequest {\n    cwd: string;\n    outputPath: string;\n    overwrite?: boolean;\n    taskId: string;\n}',
+  },
+  {
+    name: 'ImageGenerationCompleted',
+    declaration: 'export interface ImageGenerationCompleted extends ImageGenerationBase {\n    status: \'completed\';\n    path: string;\n    data: Uint8Array;\n    sizeBytes: number;\n    width: number;\n    height: number;\n    mediaType: \'image/png\';\n}',
+  },
+  {
+    name: 'ImageGenerationPending',
+    declaration: 'export interface ImageGenerationPending extends ImageGenerationBase {\n    status: \'pending\';\n}',
+  },
+  {
+    name: 'ImageGenerationRequest',
+    declaration: 'export interface ImageGenerationRequest {\n    cwd: string;\n    outputPath: string;\n    overwrite?: boolean;\n    prompt: string;\n    aspectRatio: ImageAspectRatio;\n}',
+  },
+  {
+    name: 'ImageGenerationResult',
+    declaration: 'export type ImageGenerationResult = ImageGenerationPending | ImageGenerationCompleted;',
   },
   {
     name: 'ImageMediaType',

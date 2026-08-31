@@ -55,6 +55,7 @@ Every package lives in exactly one group; new packages join existing groups, and
 | [`web/`](web/README.md) | Web capability family: seam, search/fetch providers, model-facing web tools |
 | [`attachment/`](attachment/README.md) | Durable attachment identity, validation, local content-addressed storage |
 | [`document/`](document/README.md) | Workspace-confined Word, PowerPoint, and Excel artifact generation |
+| [`image/`](image/README.md) | Provider-neutral image generation, Dreamina CLI provider, and model-facing tools |
 | [`spill/`](spill/README.md) | Spill capability family: storage seam, local impl, tool-result spill policy |
 | [`todo/`](todo/README.md) | The model-facing `todo_write` tool |
 | [`plan/`](plan/README.md) | Plan collaboration state with a direct entry command and reviewed exit |

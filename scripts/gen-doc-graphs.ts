@@ -546,6 +546,15 @@ const SERVICE_ROLES: ServiceRole[] = [
     note: 'Creates validated Word, PowerPoint, and Excel files below a trusted session workspace; the host owns the generator and presets decide which agents receive creation tools.',
   },
   {
+    key: 'imageGeneration',
+    pkg: 'image-generation',
+    title: 'Image generation seam',
+    mode: 'seam',
+    implementations: ['image-generation-dreamina'],
+    consumers: ['tool-image-generation'],
+    note: 'Creates validated PNG assets below a trusted session workspace; the shipped Dreamina provider serializes account work while presets decide which agents receive the tools.',
+  },
+  {
     key: 'fs',
     pkg: 'fs',
     title: 'Filesystem provider seam',

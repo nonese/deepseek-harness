@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-31-product-design-skill-preset.md
+2026-08-31-product-design-skill-preset.md: 3521a8f467ced52a489a7e7ff05e11f5e0af59a3
+2026-08-31-product-design-skill-preset.zh.md: 8ab8330604881a6e1a818ce3d357a21acf1216a8

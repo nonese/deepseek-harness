@@ -35,6 +35,8 @@ The presets you can choose from come from two places: the presets shipped inside
 
 The shipped roster includes `teacher` (教师模式), which keeps the standard agent abilities and adds a teaching persona plus Word, PowerPoint, and Excel creation tools for lesson plans, classroom presentations, handouts, gradebooks, and other structured teaching material. The document generator remains one host service; choosing Teacher mode changes only that session's tool and prompt composition.
 
+It also includes `product-design` (产品设计模式), which keeps the standard agent abilities and adds a product-design persona plus ten workspace-scoped workflow skills for context, research, audit, visual ideation, image-to-code, URL-to-code, design QA, and explicit sharing. The preset does not manufacture browser capture, image generation, or publishing capabilities: those stages use separately installed tools or stop with a concrete missing-capability result. Product context stays under `product-design/` in the session workspace.
+
 ### Minimal configuration
 
 The plugin needs a `default` preset id and scans `roots` for presets:

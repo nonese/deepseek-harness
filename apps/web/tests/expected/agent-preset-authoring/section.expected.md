@@ -4,9 +4,9 @@
     - button "通用设置":
       - img
       - text: 通用设置
-    - button "模型":
+    - button "模型来源":
       - img
-      - text: 模型
+      - text: 模型来源
     - button "插件":
       - img
       - text: 插件
@@ -69,6 +69,16 @@
         - img
         - text: 查看
       - 'button "复制: 教师模式"':
+        - img
+        - text: 复制
+    - listitem:
+      - 'button "设为默认: 产品设计模式"':
+        - text: 产品设计模式 内置 面向产品研究、界面审计、视觉方案、截图或网址转代码与设计验收；保留标准模式能力，并按当前用户工作区隔离设计资料。
+        - code: product-design
+      - 'button "查看: 产品设计模式"':
+        - img
+        - text: 查看
+      - 'button "复制: 产品设计模式"':
         - img
         - text: 复制
   - heading "自定义" [level=3]

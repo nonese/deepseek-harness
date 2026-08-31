@@ -58,7 +58,9 @@ describe('the shipped preset root', () => {
     const ctx = await roster({ includeUserRoot: false })
 
     const listed = await ctx.agentPresets.list()
-    expect(listed.map(preset => preset.id).sort()).toEqual(['cordis', 'minimal', 'ptc', 'standard', 'teacher'])
+    expect(listed.map(preset => preset.id).sort()).toEqual([
+      'cordis', 'minimal', 'product-design', 'ptc', 'standard', 'teacher',
+    ])
     expect(listed.every(preset => preset.trust === 'system')).toBe(true)
     // Not `broken === undefined`: health asks whether each row's package is
     // installed above the base, and the shipped rows name packages the
@@ -98,7 +100,7 @@ describe('the shipped preset root', () => {
   })
 
   it('enables web_fetch in each tool-bearing Web app preset', async () => {
-    for (const id of ['cordis', 'ptc', 'standard']) {
+    for (const id of ['cordis', 'product-design', 'ptc', 'standard']) {
       const source = await readFile(join(SHIPPED_PRESET_ROOT, id, 'agent.cordis.yml'), 'utf8')
       const entries: unknown = yaml.load(source, { schema: entryListSchema })
       if (!Array.isArray(entries)) throw new TypeError(`${id} preset must contain a Cordis entry list`)

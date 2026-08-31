@@ -1004,6 +1004,42 @@ export interface Config {
 
 Source: [`packages/host/webserver/src/index.ts:59`](../packages/host/webserver/src/index.ts)
 
+<a id="deepseek-aidsh-image-generation-dreamina"></a>
+
+## `@deepseek-ai/dsh-image-generation-dreamina`
+
+Requires: `subprocess`
+
+```ts config-catalog
+/** Dreamina CLI deployment settings. */
+export interface Config {
+  /** Absolute Dreamina executable path or a bare PATH name. Defaults to `dreamina`. */
+  cliPath?: string
+  /** Dreamina image model. The Product Design preset pins `4.0`. */
+  modelVersion?: '4.0'
+  /** Dreamina image resolution. The Product Design preset pins `2k`. */
+  resolution?: '2k'
+  /** Seconds the submit command polls before returning a resumable task. Defaults to 240. */
+  pollSeconds?: number
+  /** Maximum downloaded PNG bytes. Defaults to 25 MiB. */
+  maxOutputBytes?: number
+  /** Maximum prompt characters. Defaults to 20,000. */
+  maxPromptChars?: number
+  /** Process-tree termination grace in milliseconds. Defaults to 5,000. */
+  graceMs?: number
+  /** Optional running Docker container that provides the Dreamina CLI. */
+  dockerContainer?: string
+  /** Host directory bind-mounted at `dockerContainerDownloadRoot`. */
+  dockerHostDownloadRoot?: string
+  /** Container directory corresponding to `dockerHostDownloadRoot`. */
+  dockerContainerDownloadRoot?: string
+  /** Docker executable path or PATH-resolved name. Defaults to `docker`. */
+  dockerPath?: string
+}
+```
+
+Source: [`packages/image/image-generation-dreamina/src/index.ts:24`](../packages/image/image-generation-dreamina/src/index.ts)
+
 <a id="deepseek-aidsh-invariants"></a>
 
 ## `@deepseek-ai/dsh-invariants`
@@ -3560,6 +3596,7 @@ These load from a `cordis.yml` entry with no `config:` block; they declare no co
 - `@deepseek-ai/dsh-session-projection` ([`packages/session/session-projection/src/index.ts`](../packages/session/session-projection/src/index.ts))
 - `@deepseek-ai/dsh-session-stats` — requires `sessionProjections` ([`packages/session/session-stats/src/index.ts`](../packages/session/session-stats/src/index.ts))
 - `@deepseek-ai/dsh-skill-badge` — requires `skills` ([`packages/skill/skill-badge/src/index.ts`](../packages/skill/skill-badge/src/index.ts))
+- `@deepseek-ai/dsh-skill-product-design` — requires `skills` ([`packages/skill/skill-product-design/src/index.ts`](../packages/skill/skill-product-design/src/index.ts))
 - `@deepseek-ai/dsh-storage` ([`packages/storage/storage/src/index.ts`](../packages/storage/storage/src/index.ts))
 - `@deepseek-ai/dsh-subagent` ([`packages/subagent/subagent/src/index.ts`](../packages/subagent/subagent/src/index.ts))
 - `@deepseek-ai/dsh-subprocess-local` ([`packages/subprocess/subprocess-local/src/index.ts`](../packages/subprocess/subprocess-local/src/index.ts))
@@ -3568,6 +3605,7 @@ These load from a `cordis.yml` entry with no `config:` block; they declare no co
 - `@deepseek-ai/dsh-tool-ask-user` — requires `tools` · `userQuestions` ([`packages/interaction/tool-ask-user/src/index.ts`](../packages/interaction/tool-ask-user/src/index.ts))
 - `@deepseek-ai/dsh-tool-call-timeout-policy` — requires `tools` ([`packages/guard/timeout-policy/src/index.ts`](../packages/guard/timeout-policy/src/index.ts))
 - `@deepseek-ai/dsh-tool-cordis` — requires `tools` · `systemPrompt` · `dynamicCordisRunner` · `cordisInspect` ([`packages/extensions/tool-cordis/src/index.ts`](../packages/extensions/tool-cordis/src/index.ts))
+- `@deepseek-ai/dsh-tool-image-generation` — requires `attachments` · `imageGeneration` · `llm` · `tools` ([`packages/image/tool-image-generation/src/index.ts`](../packages/image/tool-image-generation/src/index.ts))
 - `@deepseek-ai/dsh-tool-subagent-control` — requires `tools` · `subagents` ([`packages/subagent/tool-subagent-control/src/index.ts`](../packages/subagent/tool-subagent-control/src/index.ts))
 - `@deepseek-ai/dsh-user-questions` ([`packages/interaction/user-questions/src/index.ts`](../packages/interaction/user-questions/src/index.ts))
 - `@deepseek-ai/dsh-webhook` — requires `agents` · `agentDefaultModel` · `agentPresets` · `permissionPresets` · `sessionTitle` · `workspaceRegistry` ([`packages/webhook/webhook/src/index.ts`](../packages/webhook/webhook/src/index.ts))
@@ -3586,6 +3624,7 @@ Abstract service classes — a deployment loads a concrete implementation packag
 - `@deepseek-ai/dsh-file-reference` — abstract `FileReferenceService` ([`packages/context/file-reference/src/index.ts`](../packages/context/file-reference/src/index.ts))
 - `@deepseek-ai/dsh-fs` — abstract `FileSystem` ([`packages/fs/fs/src/index.ts`](../packages/fs/fs/src/index.ts))
 - `@deepseek-ai/dsh-host-directory-picker` — abstract `DirectoryPicker` ([`packages/host/directory-picker/src/index.ts`](../packages/host/directory-picker/src/index.ts))
+- `@deepseek-ai/dsh-image-generation` — abstract `ImageGenerationRuntime` ([`packages/image/image-generation/src/index.ts`](../packages/image/image-generation/src/index.ts))
 - `@deepseek-ai/dsh-jobs` — abstract `JobRegistry` ([`packages/jobs/jobs/src/index.ts`](../packages/jobs/jobs/src/index.ts))
 - `@deepseek-ai/dsh-sandbox` — abstract `SandboxProvider` ([`packages/sandbox/sandbox/src/index.ts`](../packages/sandbox/sandbox/src/index.ts))
 - `@deepseek-ai/dsh-session-persistence` — abstract `SessionPersistence` ([`packages/session/session-persistence/src/index.ts`](../packages/session/session-persistence/src/index.ts))

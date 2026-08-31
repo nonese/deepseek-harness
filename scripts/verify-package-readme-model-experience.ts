@@ -44,6 +44,7 @@ const NO_MODEL_EXPERIENCE_SECTION: Readonly<Record<string, string>> = {
  * blocks. A package moves on or off this list with its context behavior.
  */
 const SENTENCE_MODEL_EXPERIENCE: Readonly<Record<string, SentenceContract>> = {
+  'packages/image/image-generation': { kind: 'indirect', reason: 'The service interface delegates model rendering to dsh-tool-image-generation.' },
   'packages/document/artifacts': { kind: 'indirect', reason: 'The service interface delegates model rendering to dsh-tool-artifacts.' },
   'packages/document/artifacts-local': { kind: 'indirect', reason: 'The local provider delegates model rendering to dsh-tool-artifacts.' },
   'packages/attachment/attachment': { kind: 'indirect', reason: 'The storage seam delegates model request rendering to provider adapters.' },
