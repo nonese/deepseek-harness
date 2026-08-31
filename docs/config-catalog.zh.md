@@ -952,7 +952,7 @@ export interface Config {
 }
 ```
 
-来源：[`packages/host/auth-web/src/index.ts:66`](../packages/host/auth-web/src/index.ts)
+来源：[`packages/host/auth-web/src/index.ts:69`](../packages/host/auth-web/src/index.ts)
 
 <a id="deepseek-aidsh-host-directory-picker-browse"></a>
 
@@ -3427,7 +3427,7 @@ export interface Config {
 }
 ```
 
-来源：[`packages/web/web-search-deepseek/src/index.ts:46`](../packages/web/web-search-deepseek/src/index.ts)
+来源：[`packages/web/web-search-deepseek/src/index.ts:51`](../packages/web/web-search-deepseek/src/index.ts)
 
 <a id="deepseek-aidsh-web-search-exa"></a>
 

@@ -100,5 +100,16 @@ declare module '@deepseek-ai/cordis' {
      * @mode emit
      */
     'credentials/record-updated'(key: CredentialKey): void
+
+    /**
+     * Committed change to one authenticated user's credential reference. The
+     * owner id is transport-private: a multi-user carrier projects this event
+     * to the ordinary `credentials/reference-updated` event only for that
+     * owner, so another browser never learns which references a peer stores.
+     * @param ownerId - opaque authenticated-user id owning the reference.
+     * @param ref - reference whose user-owned value changed.
+     * @mode emit
+     */
+    'user-credentials/reference-updated'(ownerId: string, ref: CredentialRef): void
   }
 }

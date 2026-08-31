@@ -45,6 +45,7 @@ import {
   managedModelsStatus,
 } from './managed-models.ts'
 import { userScopedRemotePolicy } from './remote-policy.ts'
+import { createUserCredentialStore } from './user-credentials.ts'
 
 /** Stable Cordis plugin name. */
 export const name = 'host-auth-web'
@@ -800,6 +801,8 @@ export function apply(ctx: Context, config: Config = {}): void {
   const tokenEndpointCreatedCompatibility = config.oidcTokenEndpointCreatedCompatibility ?? false
   const projectFileUploadMaxBytes = config.projectFileUploadMaxBytes ?? DEFAULT_PROJECT_FILE_UPLOAD_MAX_BYTES
   const pendingOidcFlows = new Map<string, PendingOidcFlow>()
+
+  ctx.provide('userCredentials', createUserCredentialStore(ctx))
 
   ctx.connection.registerAuthenticator({
     authenticate: async (request) => {

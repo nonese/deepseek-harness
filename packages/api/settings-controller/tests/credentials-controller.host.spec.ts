@@ -115,6 +115,32 @@ describe('the credentials Remote namespace a configuration surface calls', () =>
       .toEqual({ DEEPSEEK_API_KEY: { configured: false, writable: true } })
   })
 
+  it('routes an authenticated browser through its personal credential scope', async () => {
+    const ctx = new Context()
+    await ctx.plugin(MemoryCredentials, { DEEPSEEK_API_KEY: 'global-secret' })
+    const values = new Map<string, string>()
+    ctx.provide('userCredentials', {
+      current: () => ({
+        resolve: ref => Promise.resolve(values.has(ref) ? { value: values.get(ref) as string, source: 'user' } : undefined),
+        describe: ref => Promise.resolve(values.has(ref)
+          ? { configured: true, source: 'user', writable: true }
+          : { configured: false, writable: true }),
+        set: (ref, value) => { values.set(ref, value); return Promise.resolve() },
+        unset: (ref) => { values.delete(ref); return Promise.resolve() },
+      }),
+      forOwner: () => { throw new Error('not used by the controller') },
+    })
+    await ctx.plugin(CredentialsController)
+
+    expect(await ctx.credentialsController.describe(['DEEPSEEK_API_KEY']))
+      .toEqual({ DEEPSEEK_API_KEY: { configured: false, writable: true } })
+    await ctx.credentialsController.set('DEEPSEEK_API_KEY', 'personal-secret')
+    expect(await ctx.credentialsController.describe(['DEEPSEEK_API_KEY']))
+      .toEqual({ DEEPSEEK_API_KEY: { configured: true, source: 'user', writable: true } })
+    expect(await ctx.credentials.resolve('DEEPSEEK_API_KEY' as never))
+      .toEqual({ value: 'global-secret', source: 'memory' })
+  })
+
   it('reports a refused write as credential/rejected naming only the reference', async () => {
     const controller = await boot({}, RejectingCredentials)
     const failure = await controller.set('DEEPSEEK_API_KEY', 'sk-live').catch((error: unknown) => error)

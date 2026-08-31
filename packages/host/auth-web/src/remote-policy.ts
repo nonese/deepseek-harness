@@ -34,7 +34,6 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
 
 const ADMIN_NAMESPACES = new Set([
   'cordisInspect',
-  'credentials',
   'dynamicCordisRunner',
   'settings',
 ])
@@ -48,6 +47,9 @@ const SAFE_UNSCOPED_ENDPOINTS = new Set([
   '$events/follow',
   'agentPresets/list',
   'agentPresets/read',
+  'credentials/describe',
+  'credentials/set',
+  'credentials/unset',
   'llm/discoverModels',
   'llm/listConfigurableProviders',
   'llm/listProviders',
@@ -179,6 +181,10 @@ async function requireRequestOwnership(
 
   if (ADMIN_NAMESPACES.has(request.namespace) && principal.user.role !== 'admin') {
     forbidden('administrator role is required')
+  }
+
+  if (request.namespace === 'credentials' && ctx.get('userCredentials')?.current() === undefined) {
+    forbidden('authenticated user credential storage is unavailable')
   }
 
   if (ADMIN_UNSCOPED_ENDPOINTS.has(endpoint) && principal.user.role !== 'admin') {
@@ -407,6 +413,12 @@ async function *projectEventStream(
     const event = raw as RemoteEventEmit
     if (event.event === 'llm/adapters-updated') {
       yield raw
+      continue
+    }
+    if (event.event === 'user-credentials/reference-updated') {
+      if (event.args[0] === String(principal.user.id)) {
+        yield { ...event, event: 'credentials/reference-updated', args: [event.args[1]] }
+      }
       continue
     }
     if (event.event === 'credentials/reference-updated'

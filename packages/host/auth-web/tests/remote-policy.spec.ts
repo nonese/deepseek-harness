@@ -80,6 +80,9 @@ function fixture(): {
     ['bob-session', { meta: { cwd: join(bob.projects, 'one') } }],
   ])
   const ctx = {
+    get(name: string): unknown {
+      return Reflect.get(this, name) as unknown
+    },
     auth: {
       currentPrincipal: () => current.value,
       userPaths: (id: UserId) => id === 'alice' ? alice : bob,
@@ -87,6 +90,9 @@ function fixture(): {
     },
     credentials: {
       describe: () => Promise.resolve({ configured: credentialConfigured.value }),
+    },
+    userCredentials: {
+      current: () => ({}),
     },
     settings: {
       writable: true,
@@ -265,6 +271,11 @@ describe('per-user Remote policy', () => {
       failures: [],
     })
 
+    await expect(policy.invoke(
+      request('session', 'modelCatalog'),
+      () => Promise.resolve({ ...catalog, default: { provider: 'local', model: 'local-model' } }),
+    )).resolves.toMatchObject({ default: { provider: 'local', model: 'local-model' } })
+
     optedIn.value = true
     await expect(policy.invoke(
       request('session', 'modelCatalog'),
@@ -324,6 +335,33 @@ describe('per-user Remote policy', () => {
       streamNext,
     ))).code).toBe('auth/forbidden')
     expect(streamNext).not.toHaveBeenCalled()
+  })
+
+  it('allows the personal credentials namespace and projects updates only to their owner', async () => {
+    const { ctx } = fixture()
+    const policy = userScopedRemotePolicy(ctx)
+    await expect(policy.invoke(
+      request('credentials', 'describe', { refs: ['DEEPSEEK_API_KEY'] }),
+      () => Promise.resolve({ DEEPSEEK_API_KEY: { configured: false, writable: true } }),
+    )).resolves.toEqual({ DEEPSEEK_API_KEY: { configured: false, writable: true } })
+
+    const source = (async function *() {
+      yield { type: 'emit', event: 'user-credentials/reference-updated', args: ['bob', 'DEEPSEEK_API_KEY'] }
+      yield { type: 'emit', event: 'user-credentials/reference-updated', args: ['alice', 'DEEPSEEK_API_KEY'] }
+      yield { type: 'emit', event: 'credentials/reference-updated', args: ['HARNESS_SHARED_DEEPSEEK_API_KEY'] }
+    })()
+    const projected = await policy.stream(request('$events', 'follow'), () => Promise.resolve(source))
+    const frames: unknown[] = []
+    for await (const frame of projected) frames.push(frame)
+    expect(frames).toEqual([
+      { type: 'emit', event: 'credentials/reference-updated', args: ['DEEPSEEK_API_KEY'] },
+    ])
+
+    Reflect.deleteProperty(ctx, 'userCredentials')
+    expect((await failure(policy.invoke(
+      request('credentials', 'describe', { refs: ['DEEPSEEK_API_KEY'] }),
+      () => Promise.resolve({}),
+    )))).toMatchObject({ code: 'auth/forbidden' })
   })
 
   it('rejects native filesystem access and unscoped ordinary-user endpoints', async () => {

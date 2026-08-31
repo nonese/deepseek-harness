@@ -96,6 +96,23 @@ describe('web e2e: settings modal and General preferences', () => {
     await dialog.getByRole('button', { name: '模型来源' }).click()
     await expect.poll(() => dialog.getByRole('button', { name: '模型来源' }).getAttribute('aria-current'), { timeout: 5_000 }).toBe('true')
     expect(await dialog.getByRole('button', { name: '通用设置' }).getAttribute('aria-current')).toBeNull()
+    // The authenticated page rotates only this user's DeepSeek reference. The
+    // literal clears from the browser after the write and removal leaves no
+    // secret in the shared credential document.
+    const personal = dialog.getByRole('region', { name: '个人 DeepSeek API Key' })
+    await personal.waitFor({ timeout: 10_000 })
+    const personalKey = personal.getByLabel('API 密钥')
+    await personalKey.fill('sk-settings-personal')
+    await personal.getByRole('button', { name: '保存个人密钥' }).click()
+    await personal.getByText('个人 DeepSeek API Key 已保存。').waitFor({ timeout: 10_000 })
+    expect(await personalKey.inputValue()).toBe('')
+    expect(await page.content()).not.toContain('sk-settings-personal')
+    expect(await readFile(join(scaffold.harnessHome, '.credentials.yaml'), 'utf8'))
+      .toContain('DEEPSEEK_API_KEY: sk-settings-personal')
+    await personal.getByRole('button', { name: '删除个人密钥' }).click()
+    await personal.getByText('个人 DeepSeek API Key 已删除。').waitFor({ timeout: 10_000 })
+    expect(await readFile(join(scaffold.harnessHome, '.credentials.yaml'), 'utf8'))
+      .not.toContain('sk-settings-personal')
     // Plugins is a read-only projection of the same assembled Loader tree.
     // Capture one stable shipped row rather than the whole inventory so adding
     // an unrelated plugin does not rewrite this surface's golden.

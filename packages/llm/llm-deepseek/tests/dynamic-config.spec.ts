@@ -159,7 +159,16 @@ describe('request-level dynamic configuration', () => {
       ownerForProjectPath: () => ({ id: 'alice-id', status: 'active' }),
       sharedDeepSeekPreference: () => ({ enabled: optedIn.value }),
     } as never)
-    await ctx.credentials.set(KEY_REF, 'personal-key')
+    ctx.provide('userCredentials', {
+      current: () => undefined,
+      forOwner: () => ({
+        resolve: ref => Promise.resolve(ref === KEY_REF ? { value: 'personal-key', source: 'user' } : undefined),
+        describe: () => Promise.resolve({ configured: true, source: 'user', writable: true }),
+        set: () => Promise.resolve(),
+        unset: () => Promise.resolve(),
+      }),
+    })
+    await ctx.credentials.set(KEY_REF, 'global-key-must-not-leak')
     await ctx.credentials.set(SHARED_KEY_REF, 'administrator-key')
     await ctx.plugin(LlmDeepSeek, { baseURL: server.url })
 
@@ -185,6 +194,44 @@ describe('request-level dynamic configuration', () => {
       sessionId: SessionId('managed-session'),
     })
     expect(server.headers[2]?.authorization).toBe('Bearer personal-key')
+  })
+
+  it('does not fall back to the process-wide credential for a managed-project owner', async () => {
+    vi.stubEnv('DEEPSEEK_API_KEY', '')
+    const dir = await home()
+    const server = await mockServer([])
+    const ctx = new Context()
+    cleanups.push(() => ctx.fiber.dispose())
+    await ctx.plugin(LlmRuntime)
+    await ctx.plugin(StaticAttachmentStore)
+    await ctx.plugin(FileSettingsProvider, { path: join(dir, 'settings.yaml'), watch: false })
+    await ctx.plugin(LocalCredentialProvider, { path: join(dir, '.credentials.yaml'), watch: false })
+    ctx.provide('sessions', {
+      get: () => ({ header: { cwd: join(dir, 'users', 'alice', 'projects', 'one') } }),
+    } as never)
+    ctx.provide('auth', {
+      ownerForProjectPath: () => ({ id: 'alice-id', status: 'active' }),
+      sharedDeepSeekPreference: () => ({ enabled: false }),
+    } as never)
+    ctx.provide('userCredentials', {
+      current: () => undefined,
+      forOwner: () => ({
+        resolve: () => Promise.resolve(undefined),
+        describe: () => Promise.resolve({ configured: false, writable: true }),
+        set: () => Promise.resolve(),
+        unset: () => Promise.resolve(),
+      }),
+    })
+    await ctx.credentials.set(KEY_REF, 'global-key-must-not-leak')
+    await ctx.plugin(LlmDeepSeek, { baseURL: server.url })
+
+    const result = await assemble(ctx, {
+      model: LlmDeepSeek.SHARED_DEEPSEEK_MODEL,
+      messages: [],
+      sessionId: SessionId('managed-session'),
+    })
+    expect(result.finish).toMatchObject({ kind: 'error', failure: { code: 'MISSING_CREDENTIAL' } })
+    expect(server.requests).toHaveLength(0)
   })
 
   it('routes the next request with the freshly resolved base URL and credential', async () => {

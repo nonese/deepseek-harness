@@ -72,7 +72,7 @@ kind: "package-reference"
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-llm-deepseek)是每个受支持字段及其 JSDoc 的穷尽式真源。
 
-多用户 Web 部署可以为 `deepseek-v4-flash` 提供专用的 `HARNESS_SHARED_DEEPSEEK_API_KEY` 凭据。只有当实时会话路径属于活动用户且该用户显式启用统一凭据时，解析器才会选择它；用户未启用、选择其他模型或运行在受管用户项目之外时，仍使用普通 `apiKeyEnv` 解析。仅当用户偏好与统一凭据同时生效时，适配器才把 Flash 条目标记为托管，因此浏览器既不会收到 Key，也不会要求符合条件的用户配置个人 Key。
+多用户 Web 部署可以为 `deepseek-v4-flash` 提供专用的 `HARNESS_SHARED_DEEPSEEK_API_KEY` 凭据。只有当实时会话路径属于活动用户且该用户显式启用统一凭据时，解析器才会选择它。否则，受管用户项目只从该所有者的个人凭据 scope 解析普通 `apiKeyEnv`，绝不会继承其他用户或进程凭据 provider。仅当用户偏好与统一凭据同时生效时，适配器才把 Flash 条目标记为托管，因此浏览器既不会收到统一 Key，也不会要求符合条件的用户配置个人 Key。
 
 ### 带 thinking 与图片的流式调用
 

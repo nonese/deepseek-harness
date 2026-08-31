@@ -195,7 +195,9 @@ export function providerCopy(template: string, target: ProviderIdentity): string
  */
 export function ModelsSection(props: ModelsSectionProps): ReactNode {
   const { controller, useSnapshot, operations, schema, t, renderSlot } = props
-  if (isMultiUserBrowser()) return t === undefined ? null : <ServerModelsSection t={t} />
+  if (isMultiUserBrowser()) {
+    return t === undefined || operations === undefined ? null : <ServerModelsSection t={t} operations={operations} />
+  }
   if (
     controller === undefined || useSnapshot === undefined || operations === undefined
     || schema === undefined || t === undefined

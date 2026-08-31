@@ -257,6 +257,15 @@ const SERVICE_ROLES: ServiceRole[] = [
     note: 'Configuration carries references to secrets; providers own the values. Consumers resolve per operation, so a rotated credential reaches the very next request; the settings controller exposes value-free views and write-only storage.',
   },
   {
+    key: 'userCredentials',
+    pkg: 'credentials',
+    title: 'Authenticated user credential router',
+    mode: 'seam',
+    implementations: ['auth-web'],
+    consumers: ['api-settings-controller', 'llm-deepseek', 'llm-pi-ai', 'web-search-deepseek'],
+    note: 'The authenticated carrier isolates environment-style references by user; browser settings select the current principal, while model and tool consumers select the durable Session owner.',
+  },
+  {
     key: 'authorization',
     pkg: 'authorization',
     title: 'Authorization flow registry',

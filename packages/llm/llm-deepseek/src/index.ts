@@ -17,7 +17,10 @@ import { assertUsableApiKey, LlmError, resolveImageAttachmentAccess, resolveRetr
 import type { ModelModality, RetryPolicyConfig } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-fs'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
-import type {} from '@deepseek-ai/dsh-auth'
+import {
+  SHARED_DEEPSEEK_API_KEY_ENV,
+  SHARED_DEEPSEEK_MODEL,
+} from '@deepseek-ai/dsh-auth'
 import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-session'
 import { launchEnvironmentOf, type LaunchEnvironmentSnapshot } from '@deepseek-ai/dsh-launch-environment'
@@ -89,10 +92,7 @@ export const inject = ['llm']
 
 const NS = 'llm-deepseek'
 const DEFAULT_API_KEY_ENV = 'DEEPSEEK_API_KEY'
-/** Administrator-managed credential available only to opted-in V4 Flash sessions. */
-export const SHARED_DEEPSEEK_API_KEY_ENV = 'HARNESS_SHARED_DEEPSEEK_API_KEY'
-/** Exact model route eligible for the administrator-managed credential. */
-export const SHARED_DEEPSEEK_MODEL = 'deepseek-v4-flash'
+export { SHARED_DEEPSEEK_API_KEY_ENV, SHARED_DEEPSEEK_MODEL } from '@deepseek-ai/dsh-auth'
 /** The single provider route this plugin owns. */
 export const PROVIDER = 'deepseek-official'
 
@@ -454,6 +454,15 @@ export function apply(ctx: Context, config: Config): void {
       if (managed !== undefined) {
         return assertUsableApiKey(managed.value, 'llm-deepseek managed credential', credentialRef(SHARED_DEEPSEEK_API_KEY_ENV))
       }
+    }
+    if (owner !== undefined) {
+      const personal = await ctx.get('userCredentials')?.forOwner(String(owner.id)).resolve(ref)
+      if (personal !== undefined) return assertUsableApiKey(personal.value, 'llm-deepseek user credential', ref)
+      throw new LlmError(
+        `llm-deepseek: no personal API key for provider route "${PROVIDER}"; store ${ref}`
+        + ' through the web Models page, or enable an administrator-managed model site',
+        'MISSING_CREDENTIAL',
+      )
     }
     if (credentials !== undefined) {
       const hit = await credentials.resolve(ref)

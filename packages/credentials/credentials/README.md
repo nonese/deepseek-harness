@@ -80,6 +80,8 @@ await ctx.credentials.deleteRecord(key)                  // no-op when absent
 
 `modifyRecord` is the only write path: it hands your mutation the record as it stands at the moment the write is exclusive, and returning `undefined` leaves the entry untouched. Records have no empty-value rule — a record carrying neither a key nor environment values states that its owner confirmed ambient authentication — and a configuration UI can enumerate every record to show what you are authorized for and find records a removed plugin left behind.
 
+An authenticated carrier may also provide `ctx.userCredentials`. Its `current()` method supplies the current browser user's reference-only scope, and `forOwner(ownerId)` supplies the same scope to a model or tool operation that resolved a durable session owner. The carrier owns isolation and storage; this package defines the shared interface and the owner-tagged update event. Plugin-owned grant records remain on `ctx.credentials` and never enter a user's reference scope.
+
 ### Using a key in configuration
 
 A settings section or `cordis.yml` entry names a key instead of containing it — an LLM adapter, for example, takes `apiKeyEnv`:
@@ -115,6 +117,7 @@ One doctrine and four consequences:
 - **An empty stored value is absent.** `resolve` skips it, `describe` reports it unconfigured — a blank can never masquerade as a configured secret.
 - **Records are durable, and presence is the fact.** A record is stored per `<scope>/<id>` and survives restarts; the empty-value rule does not apply, so an `api-key` record carrying neither a key nor environment values is a deliberate statement, not a blank.
 - **Listener failures are contained.** `notifyUpdated` fans `credentials/reference-updated` out so every listener runs; a sync throw or async rejection is logged without changing the committed operation's outcome, except `INVARIANT`-coded failures, which rethrow after every listener ran.
+- **User reference scopes remain carrier-owned.** `UserCredentialStore` lets an authenticated carrier isolate environment-style references by owner without cloning the credential protocol. It emits `user-credentials/reference-updated (ownerId, ref)` after committed writes; the carrier decides whether and how to project that event to one browser.
 
 ### The credentials/reference-updated event
 
@@ -130,8 +133,8 @@ One doctrine and four consequences:
 
 | File | Role |
 |---|---|
-| [`src/index.ts`](src/index.ts) | Service Definition: the `credentialRef`/`credentialKey` brands, `ResolvedCredential`/`CredentialRecordInfo`, the abstract provider over both key spaces, contained fan-out |
-| [`src/types.ts`](src/types.ts) | Client-safe type surface: the `CredentialRef` and `CredentialKey` brands, the stored-record union, the `CredentialInfo` reference view, the `credentials/reference-updated` and `credentials/record-updated` declarations |
+| [`src/index.ts`](src/index.ts) | Service Definition: the `credentialRef`/`credentialKey` brands, `ResolvedCredential`/`CredentialRecordInfo`, the abstract provider over both key spaces, user credential scopes, contained fan-out |
+| [`src/types.ts`](src/types.ts) | Client-safe type surface: the `CredentialRef` and `CredentialKey` brands, the stored-record union, the `CredentialInfo` reference view, and credential update event declarations |
 | [`src/invariant.ts`](src/invariant.ts) | Invariant companion: `credentials/reference-updated` only fires while a credentials service is live |
 
 ### Client-safe types

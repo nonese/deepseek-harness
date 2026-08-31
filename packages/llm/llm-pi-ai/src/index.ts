@@ -184,12 +184,12 @@ export function apply(ctx: Context, config: Config): void {
     // (OPENAI_API_KEY and friends), billing another tenant for a request the
     // deployment meant to authenticate differently.
     if (ref === undefined) return undefined
+    const auth = ctx.get('auth')
+    const session = request?.sessionId === undefined ? undefined : ctx.get('sessions')?.get(request.sessionId)
+    const cwd = session?.header.cwd
+    const sessionOwner = cwd === undefined ? undefined : auth?.ownerForProjectPath(cwd)
     if (request !== undefined && isManagedModelCredentialRef(ref)) {
-      const session = request.sessionId === undefined ? undefined : ctx.get('sessions')?.get(request.sessionId)
-      const cwd = session?.header.cwd
-      const auth = ctx.get('auth')
-      const owner = cwd === undefined ? undefined : auth?.ownerForProjectPath(cwd)
-      if (owner === undefined || auth?.sharedDeepSeekPreference(owner.id).enabled !== true) {
+      if (sessionOwner === undefined || auth?.sharedDeepSeekPreference(sessionOwner.id).enabled !== true) {
         throw new LlmError(
           `llm-pi-ai: administrator-managed provider route "${provider}" requires the project owner to enable shared model access`,
           'MISSING_CREDENTIAL',
@@ -197,10 +197,15 @@ export function apply(ctx: Context, config: Config): void {
       }
     }
     const credentials = ctx.get('credentials')
-    const hit = credentials !== undefined
-      ? (await credentials.resolve(ref))?.value
-      // Without the seam the environment is the whole credential plane.
-      : launchEnvironmentOf(ctx).get(ref)?.value
+    const userOwnerId = sessionOwner?.id ?? auth?.currentPrincipal()?.user.id
+    const hit = isManagedModelCredentialRef(ref)
+      ? credentials === undefined ? undefined : (await credentials.resolve(ref))?.value
+      : userOwnerId !== undefined
+        ? (await ctx.get('userCredentials')?.forOwner(String(userOwnerId)).resolve(ref))?.value
+        : credentials !== undefined
+          ? (await credentials.resolve(ref))?.value
+          // Without the seam the environment is the whole credential plane.
+          : launchEnvironmentOf(ctx).get(ref)?.value
     if (hit !== undefined && hit.length > 0) return assertUsableApiKey(hit, 'llm-pi-ai', ref)
     throw new LlmError(
       `llm-pi-ai: no credential for provider route "${provider}"; its profile resolves ${ref}, which is not`

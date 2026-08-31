@@ -33,6 +33,9 @@
       "path": "../../credentials/credentials"
     },
     {
+      "path": "../../identity/auth"
+    },
+    {
       "path": "../../settings/settings"
     },
     {

@@ -117,6 +117,12 @@ export interface SharedDeepSeekPreference {
   enabled: boolean
 }
 
+/** Administrator-managed DeepSeek credential reference shared only with opted-in sessions. */
+export const SHARED_DEEPSEEK_API_KEY_ENV = 'HARNESS_SHARED_DEEPSEEK_API_KEY'
+
+/** Exact official DeepSeek model eligible for the administrator-managed credential. */
+export const SHARED_DEEPSEEK_MODEL = 'deepseek-v4-flash'
+
 /** Credential-reference prefix reserved for administrator-managed custom model sites. */
 export const MANAGED_MODEL_CREDENTIAL_PREFIX = 'HARNESS_SHARED_MODEL_'
 

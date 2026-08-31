@@ -6,6 +6,10 @@ import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import LocalCredentialProvider from '@deepseek-ai/dsh-credentials-local'
+import {
+  SHARED_DEEPSEEK_API_KEY_ENV,
+  SHARED_DEEPSEEK_MODEL,
+} from '@deepseek-ai/dsh-llm-deepseek'
 import WebRuntime, { WebError } from '@deepseek-ai/dsh-web'
 import {
   DeepSeekSearchProvider,
@@ -179,7 +183,7 @@ describe('DeepSeekSearchProvider availability', () => {
 
 describe('DeepSeekSearchProvider request mapping', () => {
   it('records and posts the same Anthropic Messages request with the web_search server tool', async () => {
-    const fetchMock = vi.fn(async () => jsonResponse(searchResponse()))
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => jsonResponse(searchResponse()))
     const recordRequest = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     await searchProvider({ ...options, recordRequest }).search({ query: 'hello' })
@@ -525,6 +529,64 @@ describe('web-search-deepseek plugin registration', () => {
 
       const headers = fetchMock.mock.calls.map(([, init]) => (init as RequestInit).headers as Record<string, string>)
       expect(headers.map(value => value['x-api-key'])).toEqual(['stored-key', 'rotated-key'])
+    } finally {
+      await ctx.fiber.dispose()
+      await rm(dir, { recursive: true, force: true })
+      if (previous === undefined) delete process.env.DEEPSEEK_API_KEY
+      else process.env.DEEPSEEK_API_KEY = previous
+    }
+  })
+
+  it('uses the managed official key only for the opted-in Flash route and otherwise isolates personal keys', async () => {
+    const previous = process.env.DEEPSEEK_API_KEY
+    delete process.env.DEEPSEEK_API_KEY
+    const dir = await mkdtemp(join(tmpdir(), 'dsh-web-search-user-credentials-'))
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => jsonResponse(searchResponse()))
+    vi.stubGlobal('fetch', fetchMock)
+    const ctx = new Context()
+    try {
+      const route = { provider: 'deepseek-official', model: SHARED_DEEPSEEK_MODEL }
+      const owner = { id: 'alice' }
+      const personal = new Map([['alice', 'alice-key']])
+      ctx.provide('agents', {
+        currentInitiator: () => ({
+          session: {
+            header: { cwd: '/srv/users/current/projects/one' },
+            requestContext: () => route,
+            append: vi.fn(),
+          },
+        }),
+      } as never)
+      ctx.provide('auth', {
+        ownerForProjectPath: () => owner,
+        sharedDeepSeekPreference: () => ({ enabled: true }),
+      } as never)
+      ctx.provide('userCredentials', {
+        current: () => undefined,
+        forOwner: (ownerId: string) => ({
+          resolve: () => Promise.resolve(personal.has(ownerId)
+            ? { value: personal.get(ownerId) as string, source: 'user' }
+            : undefined),
+          describe: () => Promise.resolve({ configured: personal.has(ownerId), writable: true }),
+          set: () => Promise.resolve(),
+          unset: () => Promise.resolve(),
+        }),
+      })
+      await ctx.plugin(WebRuntime, { searchProvider: DEEPSEEK_PROVIDER_ID })
+      await ctx.plugin(LocalCredentialProvider, { path: join(dir, '.credentials.yaml'), watch: false })
+      await ctx.credentials.set(credentialRef(SHARED_DEEPSEEK_API_KEY_ENV), 'administrator-key')
+      await ctx.credentials.set(credentialRef('DEEPSEEK_API_KEY'), 'global-key-must-not-leak')
+      await ctx.plugin(deepseekPlugin, { baseURL: 'https://api.deepseek.test/anthropic/v1' })
+
+      await ctx.web.search({ query: 'managed' })
+      route.model = 'deepseek-v4-pro'
+      await ctx.web.search({ query: 'personal' })
+      owner.id = 'bob'
+      await expect(ctx.web.search({ query: 'missing-personal' }))
+        .rejects.toMatchObject({ code: 'WEB_PROVIDER_CREDENTIAL_MISSING' })
+
+      const headers = fetchMock.mock.calls.map(([, init]) => (init as RequestInit).headers as Record<string, string>)
+      expect(headers.map(value => value['x-api-key'])).toEqual(['administrator-key', 'alice-key'])
     } finally {
       await ctx.fiber.dispose()
       await rm(dir, { recursive: true, force: true })

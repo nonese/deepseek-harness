@@ -8,6 +8,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import type { CredentialProvider } from '@deepseek-ai/dsh-credentials'
+import type { UserCredentialScope } from '@deepseek-ai/dsh-credentials'
 import type { CredentialInfo } from '@deepseek-ai/dsh-credentials/types'
 import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { z } from 'zod'
@@ -118,7 +119,9 @@ export class CredentialsController extends TypertRemoteService {
   }
 
   /** Resolve the optional provider or report how to supply it. */
-  private provider(): CredentialProvider {
+  private provider(): CredentialProvider | UserCredentialScope {
+    const userCredentials = this.ctx.get('userCredentials')?.current()
+    if (userCredentials !== undefined) return userCredentials
     const credentials = this.ctx.get('credentials')
     if (credentials === undefined) {
       throw new RemoteError(

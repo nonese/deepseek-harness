@@ -145,9 +145,61 @@ export interface CredentialRecordEntry {
   kind: CredentialRecord['kind']
 }
 
+/**
+ * Reference-only credential view for one authenticated user. It deliberately
+ * omits durable records: plugin-owned grants remain in the deployment
+ * credential provider, while browser model settings may read and rotate only
+ * the environment-style references their provider rows name.
+ */
+export interface UserCredentialScope {
+  /**
+   * Resolve one user-owned reference for the next provider operation.
+   * @param ref - credential reference named by provider settings.
+   * @returns the isolated value and source, or `undefined` while absent.
+   */
+  resolve(ref: CredentialRef): Promise<ResolvedCredential | undefined>
+  /**
+   * Describe one user-owned reference without returning its value.
+   * @param ref - credential reference named by provider settings.
+   * @returns configured state and writability without the secret.
+   */
+  describe(ref: CredentialRef): Promise<CredentialInfo>
+  /**
+   * Store one non-empty user-owned reference value.
+   * @param ref - credential reference to update.
+   * @param value - non-empty secret accepted from the owner.
+   */
+  set(ref: CredentialRef, value: string): Promise<void>
+  /**
+   * Remove one user-owned reference value.
+   * @param ref - credential reference to remove.
+   */
+  unset(ref: CredentialRef): Promise<void>
+}
+
+/**
+ * Multi-user credential router. The authenticated carrier supplies the
+ * current scope for browser settings, while model and tool providers select a
+ * scope explicitly from the durable session owner's opaque id.
+ */
+export interface UserCredentialStore {
+  /**
+   * Return the current authenticated request's scope.
+   * @returns the authenticated scope, or `undefined` outside one.
+   */
+  current(): UserCredentialScope | undefined
+  /**
+   * Return the isolated reference scope for one authenticated owner id.
+   * @param ownerId - opaque durable owner id.
+   * @returns the stable isolated credential scope for that owner.
+   */
+  forOwner(ownerId: string): UserCredentialScope
+}
+
 declare module '@deepseek-ai/cordis' {
   interface Context {
     credentials: CredentialProvider
+    userCredentials: UserCredentialStore
   }
 }
 

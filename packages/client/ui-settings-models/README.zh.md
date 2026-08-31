@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-`dsh-client-ui-settings-models` 是 dsh Web 客户端的 Models 设置页面。回环浏览器可以配置进程级提供方 API 密钥、模型列表与自定义 pi-ai 路由。通过认证的多用户浏览器改为接收用户级「模型来源」视图：它可以启用管理员统一模型，但不能读取或修改进程级设置与凭据。本包还会带首次运行的用户走两个有序弹窗——版本化内测声明，以及按条件显示的官方 DeepSeek 凭据步骤。
+`dsh-client-ui-settings-models` 是 dsh Web 客户端的 Models 设置页面。回环浏览器可以配置进程级提供方 API 密钥、模型列表与自定义 pi-ai 路由。通过认证的多用户浏览器改为接收用户级「模型来源」视图：它可以存储自己隔离的 DeepSeek API 密钥并启用管理员统一模型，但不能读取或修改进程级设置与凭据。本包还会带首次运行的用户走两个有序弹窗——版本化内测声明，以及按条件显示的官方 DeepSeek 凭据步骤。
 
 ## 目录
 
@@ -27,7 +27,7 @@ kind: "package-reference"
 
 从设置导航打开 Models 页面，即可看到每个已配置的提供方都有一行。其配置键未在任何位置配置的整分节提供方会渲染为其展开的设置卡片而非一行，但仅限首次运行姿态，且仅持续到用户关闭该卡片为止。每一类卡片各自持有自己的展开状态，因此关掉其中一张绝不会丢弃另一张里的草稿。
 
-在通过认证的多用户部署中，导航项显示为**模型来源**。页面读取 `/auth/preferences`，列出管理员发布的非机密模型站点，并允许当前用户启用或停用这些统一模型。实际模型选择仍按会话保存：关闭设置后，使用消息输入框旁的模型选择器；偏好改变后重新打开该选择器即可刷新目录。此模式下页面绝不会调用进程级 settings 或 credentials Remote。
+在通过认证的多用户部署中，导航项显示为**模型来源**。页面读取 `/auth/preferences`，列出管理员发布的非机密模型站点，并允许当前用户启用或停用这些统一模型。个人 DeepSeek 卡片通过当前认证用户的凭据 Remote 写入 `DEEPSEEK_API_KEY`；Host 只会把该操作投影到调用者自己的私有记录。实际模型选择仍按会话保存：关闭设置后，使用消息输入框旁的模型选择器；偏好改变后重新打开该选择器即可刷新目录。此模式下页面绝不会调用进程级 settings Remote，也不会收到其他用户的凭据状态。
 
 ### API 密钥
 
@@ -65,7 +65,7 @@ kind: "package-reference"
 
 ### 并发与凭据
 
-每次 settings 写入都携带卡片当前的 `revision`，因此来自另一个标签页或外部 `settings.yaml` 编辑的并发写入会以 `settings/conflict` 被拒绝。settings 提交后，卡片会在存储凭据前采纳返回的脱敏用户子树与 revision，因此失败的凭据阶段只重试该阶段。删除只会在 profile 指名本页派生的 `<ROUTE>_API_KEY` 目标时移除已配置且可写的凭据，然后 unset 该 profile；两个操作都幂等。加载完成后，页面订阅转发的 `settings/document-updated`、`credentials/reference-updated` 与 `llm/adapters-updated` 属主事件，以及本地 `connection/reset`，因此外部编辑无需轮询即可收敛。
+每次 settings 写入都携带卡片当前的 `revision`，因此来自另一个标签页或外部 `settings.yaml` 编辑的并发写入会以 `settings/conflict` 被拒绝。settings 提交后，卡片会在存储凭据前采纳返回的脱敏用户子树与 revision，因此失败的凭据阶段只重试该阶段。删除只会在 profile 指名本页派生的 `<ROUTE>_API_KEY` 目标时移除已配置且可写的凭据，然后 unset 该 profile；两个操作都幂等。多用户模式下，个人卡片只描述、轮换和删除 `DEEPSEEK_API_KEY`；写入成功后清空输入框，且只接收是否已配置和可写状态。加载完成后，页面订阅转发的 `settings/document-updated`、`credentials/reference-updated` 与 `llm/adapters-updated` 属主事件，以及本地 `connection/reset`，因此外部编辑无需轮询即可收敛。
 
 ### 引导协调器
 
@@ -109,7 +109,7 @@ kind: "package-reference"
 - **只有 pi-ai 路由可以手工声明**：自定义提供方卡片写入 `llm-pi-ai`——唯一一个其 profile 描述整个提供方的 namespace。`llm-deepseek` 路由是组合面的事实，不是本页能创建的东西。
 - **询问只覆盖 OpenAI 兼容端点**：适配器只读这种模型列表响应格式，因此讲其他协议的网关会报告自己无法被询问，其模型需手工填写。
 - **未声明的存活路由无处渲染**：未附带可配置提供方声明即注册的路由没有 settings 地址；它在各选择器中仍然可见，但不会出现在本页的行里。
-- **多用户浏览器不保存私人提供方凭据**：普通用户可以启用管理员统一模型站点，并按会话选择所有允许的路由，但只有管理员配置共享站点和 API 密钥。支持用户私人提供方密钥需要用户级运行时凭据解析器，不能通过开放进程级编辑器实现。
+- **多用户私人配置仅覆盖 DeepSeek 官方引用**：普通用户可以轮换自己的 `DEEPSEEK_API_KEY` 并启用管理员统一站点，但共享站点、自定义端点、模型目录及其共享密钥仍仅由管理员配置。
 
 <a id="dev-note"></a>
 ### 开发备注

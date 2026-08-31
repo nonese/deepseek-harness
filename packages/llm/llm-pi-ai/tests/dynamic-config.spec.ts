@@ -174,6 +174,37 @@ describe('request-level dynamic profiles', () => {
     expect(server.headers[1]?.authorization).toBe('Bearer pk-two')
   })
 
+  it('resolves a normal profile from the managed-project owner personal credential only', async () => {
+    const dir = await home()
+    await writeFile(join(dir, '.credentials.yaml'), 'version: 1\nrefs:\n  PI_DYNAMIC_KEY: global-key-must-not-leak\n', { mode: 0o600 })
+    const server = await mockServer([{ events: textEvents }])
+    const enabled = { value: false }
+    const cwd = join(dir, 'users', 'managed-owner', 'projects', 'one')
+    const ctx = await boot(dir, {
+      providers: { deepseek: { apiKeyEnv: 'PI_DYNAMIC_KEY', baseURL: server.url } },
+    }, { managedAccess: { enabled, cwd } })
+    ctx.provide('userCredentials', {
+      current: () => undefined,
+      forOwner: (ownerId: string) => ({
+        resolve: () => Promise.resolve(ownerId === 'managed-owner'
+          ? { value: 'personal-key', source: 'user' }
+          : undefined),
+        describe: () => Promise.resolve({ configured: true, source: 'user', writable: true }),
+        set: () => Promise.resolve(),
+        unset: () => Promise.resolve(),
+      }),
+    })
+
+    const result = await assemble(ctx, {
+      provider: 'deepseek',
+      model: 'deepseek-v4-flash',
+      messages: [],
+      sessionId: SessionId('managed-session'),
+    })
+    expect(result.message.content).toEqual([{ type: 'text', text: 'hello' }])
+    expect(server.headers[0]?.authorization).toBe('Bearer personal-key')
+  })
+
   it('uses an administrator-managed credential only for an opted-in project owner', async () => {
     const dir = await home()
     const reference = 'HARNESS_SHARED_MODEL_A1B2C3D4E5F6_API_KEY'

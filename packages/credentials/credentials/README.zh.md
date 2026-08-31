@@ -80,6 +80,8 @@ await ctx.credentials.deleteRecord(key)                  // no-op when absent
 
 `modifyRecord` 是唯一写路径：它让你的变更函数看到写入取得独占那一刻的记录，返回 `undefined` 则保持原状。记录没有空值规则——一条既无 key 也无环境值的记录，陈述的是其拥有者确认了 ambient 认证——配置界面还可以枚举每条记录，显示你已授权什么，并找出已卸载插件留下的记录。
 
+经过认证的载体还可以提供 `ctx.userCredentials`。其 `current()` 方法提供当前浏览器用户的仅引用 scope，`forOwner(ownerId)` 则为已经解析出持久会话所有者的模型或工具操作提供同一 scope。隔离与存储由载体负责；本包定义共享接口和带 owner 的更新事件。插件拥有的 grant 记录仍保留在 `ctx.credentials` 中，绝不会进入用户引用 scope。
+
 ### 在配置中使用密钥
 
 settings 分节或 `cordis.yml` 条目按名引用密钥，而不是包含密钥本身——例如 LLM（大语言模型）适配器接受 `apiKeyEnv`：
@@ -115,6 +117,7 @@ apiKeyEnv: DEEPSEEK_API_KEY
 - **空的存储值等于不存在。** `resolve` 跳过它，`describe` 报告未配置——空白永远不会伪装成已配置的机密。
 - **记录是持久化的，存在即事实。** 记录按 `<scope>/<id>` 存储并跨重启保留；空值规则不适用，因此一条既无 key 也无环境值的 `api-key` 记录是有意陈述，而不是空白。
 - **监听器失败被包含。** `notifyUpdated` 扇出 `credentials/reference-updated`，保证每个监听器都会运行；同步抛出与异步拒绝都会被记录，不改变已提交操作的结果，`INVARIANT` 编码的失败除外——它们在所有监听器运行完毕后重新抛出。
+- **用户引用 scope 仍由载体拥有。** `UserCredentialStore` 让经过认证的载体按 owner 隔离环境风格的引用，而无需复制凭据协议。它在写入提交后发出 `user-credentials/reference-updated (ownerId, ref)`；载体决定是否以及如何把该事件投影给一个浏览器。
 
 ### credentials/reference-updated 事件
 
@@ -130,8 +133,8 @@ apiKeyEnv: DEEPSEEK_API_KEY
 
 | 文件 | 职责 |
 |---|---|
-| [`src/index.ts`](src/index.ts) | Service Definition：`credentialRef`/`credentialKey` 品牌、`ResolvedCredential`/`CredentialRecordInfo`、覆盖两个键空间的抽象提供方、包含式扇出 |
-| [`src/types.ts`](src/types.ts) | 客户端安全类型面：`CredentialRef` 与 `CredentialKey` 品牌、存储记录联合类型、`CredentialInfo` 引用视图、`credentials/reference-updated` 与 `credentials/record-updated` 事件声明 |
+| [`src/index.ts`](src/index.ts) | Service Definition：`credentialRef`/`credentialKey` 品牌、`ResolvedCredential`/`CredentialRecordInfo`、覆盖两个键空间的抽象提供方、用户凭据 scope、包含式扇出 |
+| [`src/types.ts`](src/types.ts) | 客户端安全类型面：`CredentialRef` 与 `CredentialKey` 品牌、存储记录联合类型、`CredentialInfo` 引用视图与凭据更新事件声明 |
 | [`src/invariant.ts`](src/invariant.ts) | 不变式伴生插件：`credentials/reference-updated` 只在凭据服务存活时触发 |
 
 ### 客户端安全类型

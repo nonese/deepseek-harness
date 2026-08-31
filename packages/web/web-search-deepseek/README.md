@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-With `dsh-web-search-deepseek`, the harness searches the web through DeepSeek's native search using an existing `DEEPSEEK_API_KEY`. Choose it when a deployment wants DeepSeek native search and accepts that one search costs a full model turn in latency and tokens, because DeepSeek exposes no dedicated search endpoint. Results come from the structured search blocks DeepSeek returns, never from scraping text out of a reply. A missing credential fails the call with a structured error; a response without a search-result block fails loudly rather than degrading. The model-facing `web_search` tool lives in `dsh-tool-web`.
+With `dsh-web-search-deepseek`, the harness searches the web through DeepSeek's native search using the initiating user's DeepSeek credential. An opted-in managed Flash session uses the administrator's official-site key; another managed user session uses only that owner's `DEEPSEEK_API_KEY`. Choose it when a deployment wants DeepSeek native search and accepts that one search costs a full model turn in latency and tokens, because DeepSeek exposes no dedicated search endpoint. Results come from the structured search blocks DeepSeek returns, never from scraping text out of a reply. A missing credential fails the call with a structured error; a response without a search-result block fails loudly rather than degrading. The model-facing `web_search` tool lives in `dsh-tool-web`.
 
 ## Table of Contents
 
@@ -33,7 +33,7 @@ Choose this backend when a deployment wants DeepSeek's native server-side web se
 
 ### Minimal configuration
 
-Load the web service and the provider; the key resolves from `ctx.credentials` when that service is mounted, otherwise from the process environment. The search endpoint uses the Anthropic-compatible base (`https://api.deepseek.com/anthropic/v1`), distinct from the chat-completions base the LLM adapter uses — never reuse `$DEEPSEEK_BASE_URL`.
+Load the web service and the provider. In an authenticated multi-user composition, the key resolves from the initiating session owner: the opted-in official Flash route uses `HARNESS_SHARED_DEEPSEEK_API_KEY`, and every other managed route uses the owner's isolated `DEEPSEEK_API_KEY`. Other compositions resolve from `ctx.credentials` when that service is mounted, otherwise from the process environment. The search endpoint uses the Anthropic-compatible base (`https://api.deepseek.com/anthropic/v1`), distinct from the chat-completions base the LLM adapter uses — never reuse `$DEEPSEEK_BASE_URL`.
 
 ```yaml
 - name: '@deepseek-ai/dsh-web'
@@ -46,7 +46,7 @@ Load the web service and the provider; the key resolves from `ctx.credentials` w
 | Field | Default | Meaning |
 |---|---|---|
 | `apiKey` | omitted | Literal DeepSeek API key; prefer `apiKeyEnv` so no secret enters configuration. A non-empty literal wins |
-| `apiKeyEnv` | `DEEPSEEK_API_KEY` | Credential reference resolved for each search through `ctx.credentials`, or from the process environment when that service is absent. A missing value fails the call as `WEB_PROVIDER_CREDENTIAL_MISSING` |
+| `apiKeyEnv` | `DEEPSEEK_API_KEY` | Credential reference resolved for each search from the initiating user's isolated scope in a multi-user composition, otherwise through `ctx.credentials` or the process environment. A missing value fails the call as `WEB_PROVIDER_CREDENTIAL_MISSING` |
 | `baseURL` | `https://api.deepseek.com/anthropic/v1` | Anthropic-compatible endpoint base; `/messages` is appended. Falls back to `$DEEPSEEK_SEARCH_BASE_URL`; an unparseable value makes the provider unavailable |
 | `model` | `deepseek-v4-flash` | Anthropic-format model name |
 | `apiVersion` | `2023-06-01` | `anthropic-version` header value |
@@ -82,7 +82,7 @@ This section explains the design decisions behind the provider; the observable b
 The provider is built on two commitments:
 
 - **Structured blocks only.** DeepSeek runs the search server-side and returns structured `web_search_tool_result` blocks; the provider parses those blocks and never scrapes URLs out of model prose. In strict mode, a response with no such block throws `WEB_PROVIDER_ERROR` instead of degrading.
-- **One credential, resolved per search.** The provider reuses the `DEEPSEEK_API_KEY` reference (no new secret) but not `$DEEPSEEK_BASE_URL`, because search speaks the Anthropic-compatible Messages API. A mounted credentials service is authoritative; without one the provider falls back to the launching process environment. Resolving per call means a key stored or rotated in the Web Models page reaches the next search without a restart.
+- **One owner, resolved per search.** The provider resolves the initiating session before reading a secret. An opted-in official Flash session uses the administrator-managed reference; another managed user session reads only that owner's `DEEPSEEK_API_KEY`. Outside the authenticated carrier, a mounted credentials service is authoritative and the launching environment is the final fallback. Resolving per call means a key stored or rotated in the Web Models page reaches the next search without a restart.
 
 ### Source map
 
@@ -95,7 +95,7 @@ The provider is built on two commitments:
 
 ### Request flow
 
-Each search projects the current Settings section into provider options — endpoint, model, key reference, limits — then resolves the credential reference through `ctx.credentials` (or the environment), appends the log-only session event, and dispatches the Messages request with the native `web_search` server tool. The response's `web_search_tool_result` blocks become `sources[]`; `cited_text` entries from text blocks are joined to their URLs as snippets; results are deduplicated by URL; and the service enforces the requested source bound on the way back.
+Each search projects the current Settings section into provider options — endpoint, model, key reference, limits — then resolves the credential from the initiating session owner, the deployment credentials, or the environment according to the composition. It appends the log-only session event and dispatches the Messages request with the native `web_search` server tool. The response's `web_search_tool_result` blocks become `sources[]`; `cited_text` entries from text blocks are joined to their URLs as snippets; results are deduplicated by URL; and the service enforces the requested source bound on the way back.
 
 </details>
 

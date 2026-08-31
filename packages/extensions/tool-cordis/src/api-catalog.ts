@@ -2852,6 +2852,25 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'userCredentials',
+    summary: 'Multi-user credential router.',
+    description: 'Multi-user credential router. The authenticated carrier supplies the current scope for browser settings, while model and tool providers select a scope explicitly from the durable session owner\'s opaque id.',
+    methods: [
+      {
+        signature: 'current(): UserCredentialScope | undefined',
+        description: 'Return the current authenticated request\'s scope.',
+        parameters: [],
+        returns: 'the authenticated scope, or `undefined` outside one.',
+      },
+      {
+        signature: 'forOwner(ownerId: string): UserCredentialScope',
+        description: 'Return the isolated reference scope for one authenticated owner id.',
+        parameters: [{ name: 'ownerId', description: 'opaque durable owner id.' }],
+        returns: 'the stable isolated credential scope for that owner.',
+      },
+    ],
+  },
+  {
     key: 'userQuestions',
     summary: '`ctx.userQuestions`: validation plus the scoped answerer waterfall.',
     description: '`ctx.userQuestions`: validation plus the scoped answerer waterfall.',
@@ -3534,6 +3553,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     summary: 'Observe the frozen, lossless-JSON final outcome.',
     description: 'Observe the frozen, lossless-JSON final outcome. Listener failures are contained. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): keyed by `exec.agent`.',
     parameters: [{ name: 'exec', description: 'the execution object that traversed the pipeline.' }, { name: 'result', description: 'a deep-frozen snapshot of the final returned result.' }],
+  },
+  {
+    name: 'user-credentials/reference-updated',
+    mode: 'emit',
+    signature: '\'user-credentials/reference-updated\'(ownerId: string, ref: CredentialRef): void',
+    summary: 'Committed change to one authenticated user\'s credential reference.',
+    description: 'Committed change to one authenticated user\'s credential reference. The owner id is transport-private: a multi-user carrier projects this event to the ordinary `credentials/reference-updated` event only for that owner, so another browser never learns which references a peer stores.',
+    parameters: [{ name: 'ownerId', description: 'opaque authenticated-user id owning the reference.' }, { name: 'ref', description: 'reference whose user-owned value changed.' }],
   },
   {
     name: 'user-questions/request',
@@ -6250,6 +6277,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'UpdateUserInput',
     declaration: 'export interface UpdateUserInput {\n    displayName?: string;\n    role?: UserRole;\n    status?: UserStatus;\n}',
+  },
+  {
+    name: 'UserCredentialScope',
+    declaration: 'export interface UserCredentialScope {\n    resolve(ref: CredentialRef): Promise<ResolvedCredential | undefined>;\n    describe(ref: CredentialRef): Promise<CredentialInfo>;\n    set(ref: CredentialRef, value: string): Promise<void>;\n    unset(ref: CredentialRef): Promise<void>;\n}',
   },
   {
     name: 'UserId',

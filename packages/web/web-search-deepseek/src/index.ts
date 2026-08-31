@@ -9,6 +9,10 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-agent'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
+import {
+  SHARED_DEEPSEEK_API_KEY_ENV,
+  SHARED_DEEPSEEK_MODEL,
+} from '@deepseek-ai/dsh-auth'
 import type {} from '@deepseek-ai/dsh-settings'
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
 import type {} from '@deepseek-ai/dsh-session'
@@ -20,6 +24,7 @@ import {
   DEEPSEEK_DEFAULT_MAX_TOKENS,
   DEEPSEEK_DEFAULT_MAX_USES,
   DEEPSEEK_DEFAULT_MODEL,
+  DEEPSEEK_PROVIDER_ID,
 } from './provider.ts'
 import type { DeepSeekSearchProviderOptions } from './provider.ts'
 
@@ -101,6 +106,21 @@ function resolveOptions(ctx: Context, config: Config): DeepSeekSearchProviderOpt
     ...literalApiKey === undefined ? {} : { apiKey: literalApiKey },
     resolveApiKey: async () => {
       const credentials = ctx.get('credentials')
+      const auth = ctx.get('auth')
+      const session = ctx.get('agents')?.currentInitiator()?.session
+      const cwd = session?.header.cwd
+      const owner = cwd === undefined ? undefined : auth?.ownerForProjectPath(cwd)
+      if (owner !== undefined) {
+        const route = session?.requestContext()
+        if (route?.provider === DEEPSEEK_PROVIDER_ID
+          && route.model === SHARED_DEEPSEEK_MODEL
+          && auth?.sharedDeepSeekPreference(owner.id).enabled === true
+          && credentials !== undefined) {
+          const managed = await credentials.resolve(credentialRef(SHARED_DEEPSEEK_API_KEY_ENV))
+          if (managed !== undefined) return managed.value
+        }
+        return (await ctx.get('userCredentials')?.forOwner(String(owner.id)).resolve(apiKeyEnv))?.value
+      }
       if (credentials !== undefined) return (await credentials.resolve(apiKeyEnv))?.value
       // Without the seam the environment is the whole credential plane.
       const ambient = launchEnvironmentOf(ctx).get(apiKeyEnv)

@@ -950,7 +950,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/host/auth-web/src/index.ts:68`](../packages/host/auth-web/src/index.ts)
+Source: [`packages/host/auth-web/src/index.ts:69`](../packages/host/auth-web/src/index.ts)
 
 <a id="deepseek-aidsh-host-directory-picker-browse"></a>
 
@@ -3425,7 +3425,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/web/web-search-deepseek/src/index.ts:46`](../packages/web/web-search-deepseek/src/index.ts)
+Source: [`packages/web/web-search-deepseek/src/index.ts:51`](../packages/web/web-search-deepseek/src/index.ts)
 
 <a id="deepseek-aidsh-web-search-exa"></a>
 

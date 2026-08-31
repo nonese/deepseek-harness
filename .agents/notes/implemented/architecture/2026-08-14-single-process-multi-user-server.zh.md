@@ -24,9 +24,9 @@ Web bundle 组合三个新的能力层：
 
 项目统一生成在用户的 `projects` 目录中。用户名和显示名称绝不选择路径，因此修改账号名称不会移动数据，构造的身份文本也不能逃逸数据根目录。现有会话日志、workspace 元数据、附件与 storage 继续使用原有文件提供方；会话所有权由生成项目目录下不可变的规范 `cwd` 决定。这样无需引入 SQLite 或第二种持久化系统即可保留文件存储格式。
 
-管理员统一 DeepSeek Key 通过现有 credentials 提供方保存在专用的 `HARNESS_SHARED_DEEPSEEK_API_KEY` 引用下。认证提供方只把已启用用户的 id 保存到仅属主可访问的 `preferences.json`。每次 `deepseek-official` / `deepseek-v4-flash` 流调用都会由适配器把实时会话路径解析为活动用户，并且只在该用户已启用时选择统一 Key；其他请求继续使用普通凭据路径。只有当该偏好和凭据都处于启用状态时，主体级 `llm.providers` 响应才会把 `deepseek-v4-flash` 标记为统一模型，因此首次使用就绪检查不会要求符合条件的用户填写个人 Key。浏览器 API 只返回是否已配置、是否可写与统一模型 id，绝不返回提交或已存储的 Key。
+管理员统一 DeepSeek Key 通过现有 credentials 提供方保存在专用的 `HARNESS_SHARED_DEEPSEEK_API_KEY` 引用下。认证提供方只把已启用用户的 id 保存到仅属主可访问的 `preferences.json`。每次 `deepseek-official` / `deepseek-v4-flash` 流调用或辅助 DeepSeek 搜索都会由消费方把实时会话路径解析为活动用户，并且只在该用户已启用时选择统一 Key；受管用户项目中的其他请求只解析该所有者的个人引用。只有当该偏好和凭据都处于启用状态时，主体级 `llm.providers` 响应才会把 `deepseek-v4-flash` 标记为统一模型，因此首次使用就绪检查不会要求符合条件的用户填写个人 Key。浏览器 API 只返回是否已配置、是否可写与统一模型 id，绝不返回提交或已存储的 Key。
 
-通过认证的多用户浏览器会用用户级「模型来源」视图替换进程级 Models 编辑器。该视图只读写 `/auth/preferences`，列出不含机密的管理员统一站点，并且绝不会调用 `settings` 或 `credentials` Remote 命名空间。启用统一模型会把其允许路由加入现有的会话级输入框模型选择器；只有该选择器能够改变某个会话选中的模型。回环单用户页面继续使用进程级提供方编辑器，管理员则通过受保护的系统页面配置共享站点与密钥。在用户级运行时解析器能够安全应用私人凭据且不暴露或修改进程级配置之前，服务端不支持用户私人提供方凭据。
+通过认证的多用户浏览器在用户级「模型来源」视图中公开管理员统一站点，并且只允许管理员修改部署 provider 配置。运行时 Models 页面可以调用 `credentials.describe`、`credentials.set` 与 `credentials.unset`；`dsh-host-auth-web` 把这些操作路由到按不透明用户 ID 隔离的仅引用 scope，并以 `api-key` 记录保存在现有凭据 provider 中。Gateway 只向该 scope 的所有者投影更新事件。LLM 与搜索消费方根据持久 Session 所有者解析 scope，因此请求绝不会回退到其他用户或进程凭据。启用统一模型会把允许的共享路由加入现有的会话级输入框模型选择器；只有该选择器能够改变某个会话选中的模型。回环单用户页面继续使用进程 provider 编辑器，管理员则通过受保护的系统页面配置共享站点与 Key。
 
 Web 部署把沙箱默认值与上限固定为 `workspace-write`。沙箱策略要求会话投影注册表，并从其 `sandboxMode` 投影解析持久化覆盖值；会话覆盖值和手写工具请求都不能超过该上限。模型可见的读取与搜索工具会在 I/O 前执行已认证可读根检查。受限子进程会隐藏完整 Harness home，只重新暴露当前已认证用户的数据树：bubblewrap 使用私有挂载覆盖，Seatbelt 使用读取 deny/allow profile。Landlock 与 Windows ACL 当前无法表达所需读取排除，因此该部署在这两个后端上关闭失败。
 

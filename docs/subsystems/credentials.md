@@ -253,6 +253,29 @@ Host service backing the generated `ctx.remote.credentials` namespace. It carrie
 
 Source: [`packages/api/settings-controller/src/credentials.ts`](../../packages/api/settings-controller/src/credentials.ts)
 
+<a id="ctxusercredentials--usercredentialstore"></a>
+
+### `ctx.userCredentials` — `UserCredentialStore`
+
+Multi-user credential router. The authenticated carrier supplies the current scope for browser settings, while model and tool providers select a scope explicitly from the durable session owner's opaque id.
+
+```ts cordis-catalog
+/**
+ * Return the current authenticated request's scope.
+ * @returns the authenticated scope, or `undefined` outside one.
+ */
+current(): UserCredentialScope | undefined
+
+/**
+ * Return the isolated reference scope for one authenticated owner id.
+ * @param ownerId - opaque durable owner id.
+ * @returns the stable isolated credential scope for that owner.
+ */
+forOwner(ownerId: string): UserCredentialScope
+```
+
+Source: [`packages/credentials/credentials/src/index.ts`](../../packages/credentials/credentials/src/index.ts)
+
 <a id="authorization-events"></a>
 
 ### `authorization/*` events
@@ -323,6 +346,31 @@ Committed change to a provider-managed credential source: a `set`, an `unset`, o
  * @mode emit
  */
 'credentials/reference-updated'(ref: CredentialRef): void
+```
+
+Source: [`packages/credentials/credentials/src/types.ts`](../../packages/credentials/credentials/src/types.ts)
+
+<a id="user-credentials-events"></a>
+
+### `user-credentials/*` events
+
+<a id="user-credentialsreference-updated--emit"></a>
+
+#### `user-credentials/reference-updated` — emit
+
+Committed change to one authenticated user's credential reference. The owner id is transport-private: a multi-user carrier projects this event to the ordinary `credentials/reference-updated` event only for that owner, so another browser never learns which references a peer stores.
+
+```ts cordis-catalog
+/**
+ * Committed change to one authenticated user's credential reference. The
+ * owner id is transport-private: a multi-user carrier projects this event
+ * to the ordinary `credentials/reference-updated` event only for that
+ * owner, so another browser never learns which references a peer stores.
+ * @param ownerId - opaque authenticated-user id owning the reference.
+ * @param ref - reference whose user-owned value changed.
+ * @mode emit
+ */
+'user-credentials/reference-updated'(ownerId: string, ref: CredentialRef): void
 ```
 
 Source: [`packages/credentials/credentials/src/types.ts`](../../packages/credentials/credentials/src/types.ts)

@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-client-ui-settings-models` is the Models settings page of the dsh web client. A loopback browser can configure process provider API keys, model lists, and custom pi-ai routes. An authenticated multi-user browser instead receives a user-scoped Model sources view: it can enable administrator-managed models without reading or changing process-global settings and credentials. The package also walks first-run users through two ordered dialogs — a versioned internal-testing notice and the conditional official-DeepSeek credential step.
+`dsh-client-ui-settings-models` is the Models settings page of the dsh web client. A loopback browser can configure process provider API keys, model lists, and custom pi-ai routes. An authenticated multi-user browser instead receives a user-scoped Model sources view: it can store its own isolated DeepSeek API key and enable administrator-managed models without reading or changing process-global settings and credentials. The package also walks first-run users through two ordered dialogs — a versioned internal-testing notice and the conditional official-DeepSeek credential step.
 
 ## Table of Contents
 
@@ -27,7 +27,7 @@ English | [中文](README.zh.md)
 
 Open the Models page from the Settings navigation to see every configured provider as a row. A whole-section provider whose key is not configured anywhere renders as its open setup card instead, but only in the first-run posture and only until the user closes that card. Each card kind owns its own open state, so closing one never discards a draft in another.
 
-In an authenticated multi-user deployment, the navigation entry reads **Model sources**. The page reads `/auth/preferences`, lists the non-secret model sites that an administrator published, and lets the current user enable or disable those managed models. The actual model choice remains per session: close Settings and use the model selector beside the message box; reopening that selector refreshes its catalog after a preference change. The page never calls the process-global settings or credentials Remotes in this mode.
+In an authenticated multi-user deployment, the navigation entry reads **Model sources**. The page reads `/auth/preferences`, lists the non-secret model sites that an administrator published, and lets the current user enable or disable those managed models. The personal DeepSeek card writes `DEEPSEEK_API_KEY` through the authenticated user's credential Remote; the Host projects that operation onto only the caller's private record. The actual model choice remains per session: close Settings and use the model selector beside the message box; reopening that selector refreshes its catalog after a preference change. The page never calls the process-global settings Remote or receives another user's credential state.
 
 ### API keys
 
@@ -65,7 +65,7 @@ A typed API key is judged on its own field: after trimming, it must be non-empty
 
 ### Concurrency and credentials
 
-Each settings write carries the card's current `revision`, so a concurrent write from another tab or an external `settings.yaml` edit is refused as `settings/conflict`. After settings commit, the card adopts the returned redacted user subtree and revision before storing the credential, so a failed credential stage retries only that stage. Deletion removes a configured, writable credential only when the profile names the page's derived `<ROUTE>_API_KEY` target, then unsets the profile; both operations are idempotent. Once loaded, the page subscribes to forwarded `settings/document-updated`, `credentials/reference-updated`, and `llm/adapters-updated` owner events, plus local `connection/reset`, so external edits converge without polling.
+Each settings write carries the card's current `revision`, so a concurrent write from another tab or an external `settings.yaml` edit is refused as `settings/conflict`. After settings commit, the card adopts the returned redacted user subtree and revision before storing the credential, so a failed credential stage retries only that stage. Deletion removes a configured, writable credential only when the profile names the page's derived `<ROUTE>_API_KEY` target, then unsets the profile; both operations are idempotent. In multi-user mode, the personal card describes, rotates, and removes only `DEEPSEEK_API_KEY`; it clears the input after a successful write and receives only configured and writable facts. Once loaded, the page subscribes to forwarded `settings/document-updated`, `credentials/reference-updated`, and `llm/adapters-updated` owner events, plus local `connection/reset`, so external edits converge without polling.
 
 ### Onboarding coordinator
 
@@ -109,7 +109,7 @@ These limits define the editor's field coverage and the page's reach; they are c
 - **Only pi-ai routes can be hand-declared** — the custom-provider card writes into `llm-pi-ai`, the one namespace whose profiles describe a whole provider. A `llm-deepseek` route is a composition fact, not something this page can create.
 - **Interrogation covers OpenAI-compatible endpoints** — the adapter reads only that model-list response format, so a gateway speaking another protocol reports that it cannot be asked and its models are entered by hand.
 - **Undeclared live routes render nowhere** — a route registered without a configurable-provider declaration has no settings address; it stays visible in pickers but not on this page's rows.
-- **Multi-user browsers do not store private provider credentials** — an ordinary user can opt into administrator-managed model sites and select every permitted route per session, but only an administrator configures shared sites and API keys. Supporting private per-user provider keys requires a user-owned runtime credential resolver rather than access to the process-global editor.
+- **Multi-user private configuration is limited to the official DeepSeek reference** — an ordinary user can rotate its own `DEEPSEEK_API_KEY` and opt into administrator-managed sites, but only an administrator configures shared sites, custom endpoints, model catalogs, and their shared keys.
 
 <a id="dev-note"></a>
 ### Dev Note

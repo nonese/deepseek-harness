@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-有了 `dsh-web-search-deepseek`，harness 可以通过 DeepSeek 原生搜索检索 web，使用部署已有的 `DEEPSEEK_API_KEY`。当部署希望使用 DeepSeek 原生搜索、并接受一次搜索在延迟与 token 上消耗一个完整模型轮次时选择它，因为 DeepSeek 不提供专用搜索端点。结果来自 DeepSeek 返回的结构化搜索块，绝不会从回复文本中抓取。凭据缺失时调用以结构化错误失败；响应缺少搜索结果块时会响亮地失败，而非降级。面向模型的 `web_search` 工具位于 `dsh-tool-web`。
+有了 `dsh-web-search-deepseek`，harness 可以使用发起用户的 DeepSeek 凭据完成原生 web 搜索。已启用统一模型的 Flash 会话使用管理员的官方站点 Key；其他受管用户会话只使用该所有者的 `DEEPSEEK_API_KEY`。当部署希望使用 DeepSeek 原生搜索、并接受一次搜索在延迟与 token 上消耗一个完整模型轮次时选择它，因为 DeepSeek 不提供专用搜索端点。结果来自 DeepSeek 返回的结构化搜索块，绝不会从回复文本中抓取。凭据缺失时调用以结构化错误失败；响应缺少搜索结果块时会响亮地失败，而非降级。面向模型的 `web_search` 工具位于 `dsh-tool-web`。
 
 ## 目录
 
@@ -33,7 +33,7 @@ kind: "package-reference"
 
 ### 最小配置
 
-加载 web 服务与本提供方；密钥在已挂载 `ctx.credentials` 服务时从其解析，否则从进程环境解析。搜索端点使用 Anthropic 兼容基址（`https://api.deepseek.com/anthropic/v1`），不同于 LLM（大语言模型）适配器使用的 chat-completions 基址——绝不复用 `$DEEPSEEK_BASE_URL`。
+加载 web 服务与本提供方。在经过认证的多用户组合中，Key 根据发起会话所有者解析：已启用的官方 Flash 路由使用 `HARNESS_SHARED_DEEPSEEK_API_KEY`，其他受管路由使用所有者隔离的 `DEEPSEEK_API_KEY`。其他组合在已挂载 `ctx.credentials` 服务时从其解析，否则从进程环境解析。搜索端点使用 Anthropic 兼容基址（`https://api.deepseek.com/anthropic/v1`），不同于 LLM（大语言模型）适配器使用的 chat-completions 基址——绝不复用 `$DEEPSEEK_BASE_URL`。
 
 ```yaml
 - name: '@deepseek-ai/dsh-web'
@@ -46,7 +46,7 @@ kind: "package-reference"
 | 字段 | 默认值 | 含义 |
 |---|---|---|
 | `apiKey` | 未设置 | DeepSeek API 密钥字面值；优先使用 `apiKeyEnv`，避免密钥进入配置。非空字面值优先 |
-| `apiKeyEnv` | `DEEPSEEK_API_KEY` | 每次搜索通过 `ctx.credentials` 解析的凭据引用；没有该服务时从进程环境解析。值缺失时调用以 `WEB_PROVIDER_CREDENTIAL_MISSING` 失败 |
+| `apiKeyEnv` | `DEEPSEEK_API_KEY` | 多用户组合中每次搜索从发起用户的隔离 scope 解析的凭据引用；其他组合通过 `ctx.credentials` 或进程环境解析。值缺失时调用以 `WEB_PROVIDER_CREDENTIAL_MISSING` 失败 |
 | `baseURL` | `https://api.deepseek.com/anthropic/v1` | Anthropic 兼容端点基址；追加 `/messages`。缺省时回退到 `$DEEPSEEK_SEARCH_BASE_URL`；无法解析时提供方不可用 |
 | `model` | `deepseek-v4-flash` | Anthropic 格式模型名称 |
 | `apiVersion` | `2023-06-01` | `anthropic-version` 标头值 |
@@ -82,7 +82,7 @@ kind: "package-reference"
 本提供方建立在两项承诺之上：
 
 - **只取结构化块。** DeepSeek 在服务端执行搜索并返回结构化的 `web_search_tool_result` 块；提供方解析这些块，绝不从模型文本中抓取 URL。严格模式下，没有此类块的响应会抛出 `WEB_PROVIDER_ERROR`，而非降级。
-- **一个凭据，逐次解析。** 提供方复用 `DEEPSEEK_API_KEY` 引用（不新增密钥），但不复用 `$DEEPSEEK_BASE_URL`，因为搜索使用 Anthropic 兼容 Messages API。已挂载的凭据服务具有权威性；没有该服务时回退到启动进程的环境。按次解析意味着在 Web 的 Models 页中存储或轮换的密钥无需重启，即可用于下一次搜索。
+- **一个所有者，逐次解析。** 提供方在读取机密之前解析发起会话。已启用的官方 Flash 会话使用管理员统一引用；其他受管用户会话只读取该所有者的 `DEEPSEEK_API_KEY`。在认证载体之外，已挂载的凭据服务具有权威性，启动环境是最终回退。按次解析意味着在 Web 的 Models 页中存储或轮换的 Key 无需重启，即可用于下一次搜索。
 
 ### 源码地图
 
@@ -95,7 +95,7 @@ kind: "package-reference"
 
 ### 请求流程
 
-每次搜索先把当前 Settings 段投影为提供方选项——端点、模型、密钥引用、上限——然后通过 `ctx.credentials`（或环境）解析凭据引用，追加仅用于日志的会话事件，并以原生 `web_search` 服务器工具分发 Messages 请求。响应中的 `web_search_tool_result` 块变为 `sources[]`；文本块中的 `cited_text` 条目按其 URL 拼接为 snippet；结果按 URL 去重；服务在返回路径上强制执行请求的来源上限。
+每次搜索先把当前 Settings 段投影为提供方选项——端点、模型、密钥引用、上限——然后根据组合从发起会话所有者、部署凭据或环境解析凭据。它追加仅用于日志的会话事件，并以原生 `web_search` 服务器工具分发 Messages 请求。响应中的 `web_search_tool_result` 块变为 `sources[]`；文本块中的 `cited_text` 条目按其 URL 拼接为 snippet；结果按 URL 去重；服务在返回路径上强制执行请求的来源上限。
 
 </details>
 
