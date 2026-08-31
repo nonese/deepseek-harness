@@ -13,6 +13,13 @@ import Include from '@deepseek-ai/cordis-plugin-include'
 import AuthFile from '@deepseek-ai/dsh-auth-file'
 import type { ConnectionRequestAuthenticator } from '@deepseek-ai/dsh-client-connection'
 import CredentialsLocal from '@deepseek-ai/dsh-credentials-local'
+import {
+  generateDesktopDeviceKeys,
+  signDesktopDeviceProof,
+  verifyDesktopActivation,
+  verifyDesktopLease,
+  type DesktopPublicJwk,
+} from '@deepseek-ai/dsh-desktop-auth'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
 import * as AuthWeb from '../src/index.ts'
 
@@ -183,6 +190,7 @@ interface BootOptions {
   readonly projectFilePreviewMaxBytes?: number
   readonly oidcTokenEndpointCreatedCompatibility?: boolean
   readonly projectFileUploadMaxBytes?: number
+  readonly desktopIssuer?: string
 }
 
 interface BootResult {
@@ -220,12 +228,14 @@ async function boot(options: BootOptions = {}): Promise<BootResult> {
     `    projectFilePreviewMaxBytes: ${String(options.projectFilePreviewMaxBytes ?? 512 * 1024)}`,
     `    oidcTokenEndpointCreatedCompatibility: ${String(options.oidcTokenEndpointCreatedCompatibility ?? false)}`,
     `    projectFileUploadMaxBytes: ${String(options.projectFileUploadMaxBytes ?? 50 * 1024 * 1024)}`,
+    ...options.desktopIssuer === undefined ? [] : [`    desktopIssuer: ${JSON.stringify(options.desktopIssuer)}`],
     '',
   ].join('\n'))
 
   const workspaces: Array<Record<string, unknown>> = []
   const sessions: Array<{ header: { cwd?: string; createdAt: number } }> = []
-  const modelSettings: { providers: Record<string, unknown> } = { providers: {} }
+  const officialModelSettings: { sharedModels?: string[] } = {}
+  const customModelSettings: { providers: Record<string, unknown> } = { providers: {} }
   const modelDiscoveryRequests: Array<{ settingsNs: string; request: Record<string, unknown> }> = []
   let authenticator: ConnectionRequestAuthenticator | undefined
   const testDeps = {
@@ -254,13 +264,21 @@ async function boot(options: BootOptions = {}): Promise<BootResult> {
       context.provide('sessionController', { inspect: vi.fn() } as never)
       context.provide('settings', {
         writable: true,
-        get: () => structuredClone(modelSettings),
-        async mutate(_namespace: string, ops: Array<{ op: 'set' | 'unset'; path: string[]; value?: unknown }>) {
+        get: (namespace: string) => structuredClone(namespace === 'llm-deepseek'
+          ? officialModelSettings
+          : customModelSettings),
+        async mutate(namespace: string, ops: Array<{ op: 'set' | 'unset'; path: string[]; value?: unknown }>) {
           for (const op of ops) {
+            if (namespace === 'llm-deepseek') {
+              if (op.path.length !== 1 || op.path[0] !== 'sharedModels') throw new Error('unexpected DeepSeek settings path')
+              if (op.op === 'set') officialModelSettings.sharedModels = structuredClone(op.value) as string[]
+              else Reflect.deleteProperty(officialModelSettings, 'sharedModels')
+              continue
+            }
             const provider = op.path[1]
             if (op.path[0] !== 'providers' || provider === undefined) throw new Error('unexpected settings path')
-            if (op.op === 'set') modelSettings.providers[provider] = structuredClone(op.value)
-            else Reflect.deleteProperty(modelSettings.providers, provider)
+            if (op.op === 'set') customModelSettings.providers[provider] = structuredClone(op.value)
+            else Reflect.deleteProperty(customModelSettings.providers, provider)
           }
         },
       } as never)
@@ -432,6 +450,7 @@ describe('real authentication route composition', () => {
           clientSecretWritable: true,
         },
         localLoginEnabled: true,
+        desktop: { enabled: false, leaseDays: 30 },
         cookie: { name: 'harness_session', httpOnly: true, sameSite: 'Lax', secure: false },
       },
       isolation: {
@@ -448,8 +467,14 @@ describe('real authentication route composition', () => {
           name: 'DeepSeek',
           baseURL: 'https://api.deepseek.com',
           models: [{ id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash' }],
+          availableModels: [
+            { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash' },
+            { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro' },
+            { id: 'deepseek-v4-flash-vision-exp', name: 'DeepSeek-V4-Flash-Vision-Exp' },
+          ],
           configured: false,
           writable: true,
+          modelSelectionWritable: true,
         }],
         enabledUsers: 0,
       },
@@ -507,12 +532,46 @@ describe('real authentication route composition', () => {
     })
     expect(JSON.stringify(configuredBody)).not.toContain(sharedKey)
 
+    const unknownOfficialModel = await fetch(`${origin}/auth/system/managed-models/deepseek-official/models`, {
+      method: 'PUT',
+      headers: { cookie: cookie as string, origin, 'content-type': 'application/json' },
+      body: JSON.stringify({ models: ['deepseek-does-not-exist'] }),
+    })
+    expect(unknownOfficialModel.status).toBe(400)
+
+    const emptyOfficialModels = await fetch(`${origin}/auth/system/managed-models/deepseek-official/models`, {
+      method: 'PUT',
+      headers: { cookie: cookie as string, origin, 'content-type': 'application/json' },
+      body: JSON.stringify({ models: [] }),
+    })
+    expect(emptyOfficialModels.status).toBe(400)
+
+    const selectedOfficialModels = await fetch(`${origin}/auth/system/managed-models/deepseek-official/models`, {
+      method: 'PUT',
+      headers: { cookie: cookie as string, origin, 'content-type': 'application/json' },
+      body: JSON.stringify({ models: ['deepseek-v4-flash', 'deepseek-v4-pro'] }),
+    })
+    expect(await selectedOfficialModels.json()).toMatchObject({
+      managedModels: {
+        sites: [{
+          provider: 'deepseek-official',
+          models: [{ id: 'deepseek-v4-flash' }, { id: 'deepseek-v4-pro' }],
+        }],
+      },
+    })
+
     const memberWrite = await fetch(`${origin}/auth/system/managed-models/deepseek-official`, {
       method: 'PUT',
       headers: { cookie: memberCookie as string, origin, 'content-type': 'application/json' },
       body: JSON.stringify({ apiKey: 'sk-member-must-be-rejected' }),
     })
     expect(memberWrite.status).toBe(403)
+    const memberModelWrite = await fetch(`${origin}/auth/system/managed-models/deepseek-official/models`, {
+      method: 'PUT',
+      headers: { cookie: memberCookie as string, origin, 'content-type': 'application/json' },
+      body: JSON.stringify({ models: ['deepseek-v4-pro'] }),
+    })
+    expect(memberModelWrite.status).toBe(403)
 
     const memberDiscovery = await fetch(`${origin}/auth/system/managed-models/discover`, {
       method: 'POST',
@@ -649,6 +708,106 @@ describe('real authentication route composition', () => {
     const oidc = await fetch(`${origin}/auth/oidc`, { redirect: 'manual' })
     expect(oidc.status).toBe(302)
     expect(oidc.headers.get('location')).toBe('/?oidc_error=unavailable')
+  })
+
+  it('generates one private desktop signing key and exposes only its public half to administrators', async () => {
+    const issuer = 'http://10.155.44.246:3081'
+    const { origin } = await boot({ desktopIssuer: issuer })
+    const cookie = await localLogin(origin)
+    const signing = await fetch(`${origin}/auth/system/desktop/signing-key`, { headers: { cookie } })
+    expect(signing.status).toBe(200)
+    const first = await signing.json() as { issuer: string; publicJwk: Record<string, unknown> }
+    expect(first).toMatchObject({ issuer, publicJwk: { kty: 'OKP', crv: 'Ed25519' } })
+    expect(first.publicJwk).not.toHaveProperty('d')
+    const repeated = await fetch(`${origin}/auth/system/desktop/signing-key`, { headers: { cookie } })
+    expect(await repeated.json()).toEqual(first)
+    const devices = await fetch(`${origin}/auth/system/desktop/devices`, { headers: { cookie } })
+    expect(await devices.json()).toEqual({ devices: [] })
+  })
+
+  it('activates an OIDC desktop, proves device possession, and denies sync after revocation', { timeout: 60_000 }, async () => {
+    const desktopIssuer = 'http://10.155.44.246:3081'
+    const { origin } = await boot({ desktopIssuer })
+    const provider = await startOidcProvider()
+    const adminCookie = await localLogin(origin)
+    expect((await fetch(`${origin}/auth/system/oidc`, {
+      method: 'PUT',
+      headers: jsonHeaders(origin, adminCookie),
+      body: JSON.stringify({
+        enabled: true,
+        issuer: provider.issuer,
+        clientId: 'harness-client',
+        clientSecret: 'harness-secret',
+        redirectUri: `${origin}/auth/oidc/callback`,
+        scopes: ['openid', 'profile', 'email', 'groups'],
+        clientAuthMethod: 'client_secret_basic',
+        allowInsecureIssuer: true,
+        administratorGroup: 'super_admin',
+      }),
+    })).status).toBe(200)
+    const signing = await fetch(`${origin}/auth/system/desktop/signing-key`, { headers: { cookie: adminCookie } })
+    const { publicJwk } = await signing.json() as { publicJwk: DesktopPublicJwk }
+    const keys = generateDesktopDeviceKeys()
+    const started = await fetch(`${origin}/auth/desktop/activation/start`, {
+      method: 'POST',
+      headers: jsonHeaders(origin),
+      body: JSON.stringify({
+        label: 'Windows test device',
+        appVersion: '0.1.2-alpha.2',
+        signaturePublicJwk: keys.signature.publicJwk,
+        encryptionPublicJwk: keys.encryption.publicJwk,
+      }),
+    })
+    expect(started.status).toBe(201)
+    const { activation } = await started.json() as { activation: string }
+    const activationClaims = await verifyDesktopActivation(activation, publicJwk, desktopIssuer)
+    const authorization = new URL(activationClaims.authorizationUrl)
+    provider.captureAuthorization(authorization)
+    const state = authorization.searchParams.get('state')
+    if (state === null) throw new Error('desktop OIDC state missing')
+    const callback = await fetch(`${origin}/auth/oidc/callback?code=valid-code&state=${encodeURIComponent(state)}`)
+    expect(callback.status).toBe(200)
+    expect(await callback.text()).toContain('登录成功')
+
+    const activationProof = await signDesktopDeviceProof(
+      keys.signature.privateJwk,
+      `pending:${activationClaims.flowId}`,
+      {
+        purpose: 'activation-complete',
+        flowId: activationClaims.flowId,
+        challenge: activationClaims.challenge,
+      },
+    )
+    const completed = await fetch(`${origin}/auth/desktop/activation/complete`, {
+      method: 'POST',
+      headers: jsonHeaders(origin),
+      body: JSON.stringify({ flowId: activationClaims.flowId, proof: activationProof }),
+    })
+    expect(completed.status).toBe(200)
+    const activationPackage = await completed.json() as { lease: string }
+    const leaseClaims = await verifyDesktopLease(activationPackage.lease, publicJwk, desktopIssuer)
+    const devices = await fetch(`${origin}/auth/system/desktop/devices`, { headers: { cookie: adminCookie } })
+    expect(await devices.json()).toMatchObject({
+      devices: [{ id: leaseClaims.deviceId, label: 'Windows test device', appVersion: '0.1.2-alpha.2' }],
+    })
+
+    const revoke = await fetch(`${origin}/auth/system/desktop/devices/${encodeURIComponent(leaseClaims.deviceId)}/revoke`, {
+      method: 'POST',
+      headers: jsonHeaders(origin, adminCookie),
+      body: '{}',
+    })
+    expect(revoke.status).toBe(200)
+    const syncProof = await signDesktopDeviceProof(keys.signature.privateJwk, leaseClaims.deviceId, {
+      purpose: 'config-sync',
+      deviceId: leaseClaims.deviceId,
+      leaseDigest: createHash('sha256').update(activationPackage.lease).digest('base64url'),
+    })
+    const denied = await fetch(`${origin}/auth/desktop/config/sync`, {
+      method: 'POST',
+      headers: jsonHeaders(origin),
+      body: JSON.stringify({ lease: activationPackage.lease, proof: syncProof }),
+    })
+    expect(denied.status).toBe(403)
   })
 
   it('browses, previews, and downloads only the authenticated user project files', { timeout: 60_000 }, async () => {

@@ -7,8 +7,8 @@ import Loader from '@deepseek-ai/cordis-plugin-loader'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import LocalCredentialProvider from '@deepseek-ai/dsh-credentials-local'
 import {
+  DEFAULT_SHARED_DEEPSEEK_MODELS,
   SHARED_DEEPSEEK_API_KEY_ENV,
-  SHARED_DEEPSEEK_MODEL,
 } from '@deepseek-ai/dsh-llm-deepseek'
 import WebRuntime, { WebError } from '@deepseek-ai/dsh-web'
 import {
@@ -537,7 +537,7 @@ describe('web-search-deepseek plugin registration', () => {
     }
   })
 
-  it('uses the managed official key only for the opted-in Flash route and otherwise isolates personal keys', async () => {
+  it('uses the managed official key for every selected official model and otherwise isolates personal keys', async () => {
     const previous = process.env.DEEPSEEK_API_KEY
     delete process.env.DEEPSEEK_API_KEY
     const dir = await mkdtemp(join(tmpdir(), 'dsh-web-search-user-credentials-'))
@@ -545,7 +545,10 @@ describe('web-search-deepseek plugin registration', () => {
     vi.stubGlobal('fetch', fetchMock)
     const ctx = new Context()
     try {
-      const route = { provider: 'deepseek-official', model: SHARED_DEEPSEEK_MODEL }
+      const route: { provider: string; model: string } = {
+        provider: 'deepseek-official',
+        model: DEFAULT_SHARED_DEEPSEEK_MODELS[0],
+      }
       const owner = { id: 'alice' }
       const personal = new Map([['alice', 'alice-key']])
       ctx.provide('agents', {
@@ -572,6 +575,12 @@ describe('web-search-deepseek plugin registration', () => {
           unset: () => Promise.resolve(),
         }),
       })
+      ctx.provide('settings', {
+        get: (namespace: string) => namespace === 'llm-deepseek'
+          ? { sharedModels: ['deepseek-v4-flash', 'deepseek-v4-pro'] }
+          : {},
+        installSection: () => {},
+      } as never)
       await ctx.plugin(WebRuntime, { searchProvider: DEEPSEEK_PROVIDER_ID })
       await ctx.plugin(LocalCredentialProvider, { path: join(dir, '.credentials.yaml'), watch: false })
       await ctx.credentials.set(credentialRef(SHARED_DEEPSEEK_API_KEY_ENV), 'administrator-key')
@@ -580,13 +589,19 @@ describe('web-search-deepseek plugin registration', () => {
 
       await ctx.web.search({ query: 'managed' })
       route.model = 'deepseek-v4-pro'
-      await ctx.web.search({ query: 'personal' })
+      await ctx.web.search({ query: 'managed-pro' })
+      route.model = 'deepseek-v4-flash-vision-exp'
+      await ctx.web.search({ query: 'personal-vision' })
       owner.id = 'bob'
       await expect(ctx.web.search({ query: 'missing-personal' }))
         .rejects.toMatchObject({ code: 'WEB_PROVIDER_CREDENTIAL_MISSING' })
 
       const headers = fetchMock.mock.calls.map(([, init]) => (init as RequestInit).headers as Record<string, string>)
-      expect(headers.map(value => value['x-api-key'])).toEqual(['administrator-key', 'alice-key'])
+      expect(headers.map(value => value['x-api-key'])).toEqual([
+        'administrator-key',
+        'administrator-key',
+        'alice-key',
+      ])
     } finally {
       await ctx.fiber.dispose()
       await rm(dir, { recursive: true, force: true })

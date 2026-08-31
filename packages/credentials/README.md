@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-The `credentials/` group manages the secret values your configuration refers to by name: store an API key once, reference it from settings or `cordis.yml`, and rotate it without editing any configuration file. It provides the runtime part of the product that stores and looks up secrets (`credentials/`), the default on-machine credential file (`credentials-local/`), and the authorization flow registry (`authorization/`) for credentials that cannot be configured, because getting one means asking a human. A rotated key reaches the very next model request, and a per-run environment override (`DEEPSEEK_API_KEY=… dsh`) always wins over stored values. Secret values never enter configuration files you sync or render — only their names do, and the local file is readable by the same OS user, not by others.
+The `credentials/` group manages secret values that configuration refers to by name. It provides the shared seam (`credentials/`), the default local YAML provider (`credentials-local/`), the Windows desktop DPAPI provider (`credentials-windows/`), and the human authorization flow registry (`authorization/`). A rotated key reaches the next model request. Ordinary configuration files contain only reference names, not secret values.
 
 ## Table of Contents
 
@@ -28,6 +28,7 @@ Three packages provide the credential feature: one stores, looks up, and removes
 |---|---|---|
 | [`credentials/`](credentials/README.md) | Store, look up, and remove secrets at runtime while configuration only names them | `ctx.credentials` |
 | [`credentials-local/`](credentials-local/README.md) | The default on-machine store: a private YAML file, environment overrides win | registers `ctx.credentials` |
+| [`credentials-windows/`](credentials-windows/README.md) | Windows desktop store: one CurrentUser DPAPI-encrypted document | registers `ctx.credentials` |
 | [`authorization/`](authorization/README.md) | Plugin-owned flows that obtain a credential by asking a human | `ctx.authorization` |
 
 -----

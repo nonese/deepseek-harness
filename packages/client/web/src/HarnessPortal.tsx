@@ -40,8 +40,10 @@ interface ManagedModelSiteStatus {
   name: string
   baseURL: string
   models: readonly { id: string; name: string }[]
+  availableModels: readonly { id: string; name: string }[]
   configured: boolean
   writable: boolean
+  modelSelectionWritable: boolean
 }
 
 interface ManagedModelsStatus {
@@ -719,7 +721,7 @@ interface ManagedModelPickerProps {
   models: readonly { id: string; name: string }[]
   selected: readonly string[]
   t: WebTranslate
-  onDiscover: () => void
+  onDiscover?: () => void
   onSelected: (models: string[]) => void
 }
 
@@ -739,7 +741,9 @@ function ManagedModelPicker({
       <div className={css.managedModelPickerToolbar}>
         <span>{t('shared.selectedModels', { count: selected.length })}</span>
         <div>
-          <button type="button" onClick={onDiscover}>{discovering ? t('shared.loadingModels') : t('shared.loadModels')}</button>
+          {onDiscover === undefined
+            ? null
+            : <button type="button" onClick={onDiscover}>{discovering ? t('shared.loadingModels') : t('shared.loadModels')}</button>}
           <button type="button" disabled={models.length === 0} onClick={() => { onSelected(models.slice(0, 32).map(model => model.id)) }}>{t('shared.selectAllModels')}</button>
           <button type="button" disabled={selected.length === 0} onClick={() => { onSelected([]) }}>{t('shared.clearModels')}</button>
         </div>
@@ -776,6 +780,7 @@ function ManagedModelPicker({
 function SystemSettingsView({ t }: { t: WebTranslate }) {
   const [settings, setSettings] = useState<SystemSettingsResponse>()
   const [apiKey, setApiKey] = useState('')
+  const [officialModels, setOfficialModels] = useState<string[]>([])
   const [newSite, setNewSite] = useState<ManagedSiteDraft>(emptyManagedSiteDraft)
   const [siteDrafts, setSiteDrafts] = useState<Record<string, ManagedSiteDraft>>({})
   const [modelOptions, setModelOptions] = useState<Record<string, readonly { id: string; name: string }[]>>({})
@@ -798,6 +803,8 @@ function SystemSettingsView({ t }: { t: WebTranslate }) {
     try {
       const response = await jsonRequest<SystemSettingsResponse>('/auth/system')
       setSettings(response)
+      setOfficialModels(response.managedModels.sites
+        .find(site => site.kind === 'deepseek-official')?.models.map(model => model.id) ?? [])
       setOidcDraft(oidcDraftFrom(response.authentication.oidc))
       setSiteDrafts(Object.fromEntries(response.managedModels.sites
         .filter(site => site.kind === 'openai-compatible')
@@ -824,6 +831,8 @@ function SystemSettingsView({ t }: { t: WebTranslate }) {
     setModelOptions(current => Object.fromEntries(managedModels.sites
       .filter(site => site.kind === 'openai-compatible')
       .map(site => [site.id, current[site.id] ?? site.models])))
+    setOfficialModels(managedModels.sites
+      .find(site => site.kind === 'deepseek-official')?.models.map(model => model.id) ?? [])
   }
 
   const discoverManagedSite = useCallback(async (
@@ -916,6 +925,22 @@ function SystemSettingsView({ t }: { t: WebTranslate }) {
       updateManagedStatus(managedModels)
       setApiKey('')
       setNotice(t('shared.removedNotice'))
+    }).catch((reason: unknown) => {
+      setError(reason instanceof Error ? reason.message : String(reason))
+    }).finally(() => { setSaving(false) })
+  }
+
+  const saveOfficialModels = (): void => {
+    if (officialModels.length === 0) return
+    setSaving(true)
+    setError(undefined)
+    setNotice(undefined)
+    void jsonRequest<{ managedModels: ManagedModelsStatus }>('/auth/system/managed-models/deepseek-official/models', {
+      method: 'PUT',
+      body: JSON.stringify({ models: officialModels }),
+    }).then(({ managedModels }) => {
+      updateManagedStatus(managedModels)
+      setNotice(t('shared.officialModelsSavedNotice'))
     }).catch((reason: unknown) => {
       setError(reason instanceof Error ? reason.message : String(reason))
     }).finally(() => { setSaving(false) })
@@ -1067,8 +1092,24 @@ function SystemSettingsView({ t }: { t: WebTranslate }) {
                     {officialSite.configured ? t('state.configured') : t('state.notConfigured')}
                   </span>
                 </div>
-                <div className={css.managedModelChips}>
-                  {officialSite.models.map(model => <code key={model.id}>{model.name}</code>)}
+                <p className={css.managedSiteHelp}>{t('shared.officialModelHelp')}</p>
+                <ManagedModelPicker
+                  disabled={saving || !officialSite.modelSelectionWritable}
+                  discovering={false}
+                  models={officialSite.availableModels}
+                  selected={officialModels}
+                  t={t}
+                  onSelected={setOfficialModels}
+                />
+                <div className={css.managedSiteActions}>
+                  <button
+                    className={css.primaryButton}
+                    type="button"
+                    disabled={saving || !officialSite.modelSelectionWritable || officialModels.length === 0}
+                    onClick={saveOfficialModels}
+                  >
+                    {saving ? t('action.saving') : t('shared.saveOfficialModels')}
+                  </button>
                 </div>
                 <form className={css.credentialForm} onSubmit={saveSharedCredential}>
                   <label htmlFor="shared-deepseek-api-key">{officialSite.configured ? t('shared.replaceApiKey') : t('shared.setApiKey')}</label>

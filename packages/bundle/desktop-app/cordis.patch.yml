@@ -1,0 +1,50 @@
+# Windows desktop is one local user and keeps the Web rendering surface. The
+# Electron launcher binds loopback only and obtains the authenticated process
+# URL from stdout, so server identities and browser OIDC do not belong here.
+
+- id: auth-file
+  disabled: true
+
+- id: auth-web
+  disabled: true
+
+- id: web-startup
+  disabled: true
+
+- id: credentials
+  disabled: true
+
+- insert:
+    - id: desktop-web-startup
+      name: '@deepseek-ai/dsh-desktop-app/startup'
+
+    - id: credentials-windows
+      name: '@deepseek-ai/dsh-credentials-windows'
+      config:
+        path: !!js dshHomePath('credentials.dpapi')
+
+- id: sandbox-policy
+  name: '@deepseek-ai/dsh-sandbox-policy'
+  config:
+    mode: danger-full-access
+    workspaceRoot: !!js process.cwd()
+
+- id: approval
+  name: '@deepseek-ai/dsh-user-approval'
+  config:
+    policy: never
+
+- id: permission
+  name: '@deepseek-ai/dsh-permission-presets'
+  config:
+    defaultPreset: danger-full-access
+    presets:
+      read-only:
+        sandbox: read-only
+        approval: ask
+      workspace-write:
+        sandbox: workspace-write
+        approval: ask
+      danger-full-access:
+        sandbox: danger-full-access
+        approval: never

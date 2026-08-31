@@ -57,6 +57,7 @@ A request selects the route with `provider: deepseek-official`; the model id pas
 | `maxTokens` | `256,000` | Per-request output cap; a model's own cap and explicit request values win |
 | `defaultContextWindow` | `1,000,000` | Capacity fallback for models without an exact value |
 | `models` | V4 Flash + V4 Pro + V4 Flash Vision Exp | Advisory catalog shown by discovery consumers |
+| `sharedModels` | V4 Flash | Official catalog ids authorized by the administrator-managed credential; the authenticated Web system settings page owns this selection |
 | `streamIdleTimeoutMs` | `300,000` | Maximum provider idle time per outstanding stream read |
 | `maxRequestFilesBytes` | `128 MiB` | High watermark for retained request-image bytes before oldest-first offload |
 | `maxInlineRequestImageBytes` | `20 MiB` | Independent base64 fallback high watermark |
@@ -72,7 +73,7 @@ A request selects the route with `provider: deepseek-official`; the model id pas
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-llm-deepseek) is the exhaustive source for every accepted field and its JSDoc.
 
-The multi-user Web deployment may supply the dedicated `HARNESS_SHARED_DEEPSEEK_API_KEY` credential for `deepseek-v4-flash`. The resolver selects it only when the live session path belongs to an active user who explicitly opted in. Otherwise a managed user project resolves the ordinary `apiKeyEnv` only from that owner's personal credential scope; it never inherits another user or the process credential provider. The adapter advertises the Flash row as managed only while both that preference and the shared credential are active, so the browser neither receives the shared key nor asks an eligible user to configure a personal one.
+The multi-user Web deployment may supply the dedicated `HARNESS_SHARED_DEEPSEEK_API_KEY` credential for one or more `sharedModels`. The resolver selects it only when the live Session uses a selected official model, belongs to an active user, and that user explicitly opted in. Otherwise a managed user project resolves the ordinary `apiKeyEnv` only from that owner's personal credential scope; it never inherits another user or the process credential provider. Without a personal key, an opted-in user's model catalog contains only the selected official rows; with a personal key, unselected official rows remain available through that private credential. The browser never receives the shared key.
 
 ### Streaming with thinking and images
 

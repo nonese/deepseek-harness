@@ -1,0 +1,8 @@
+{
+  "serverOrigin": "http://10.155.44.246:3081",
+  "serverSigningPublicJwk": {
+    "kty": "OKP",
+    "crv": "Ed25519",
+    "x": "replace-with-the-public-key-from-auth-system-desktop-signing-key"
+  }
+}

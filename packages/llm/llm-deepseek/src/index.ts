@@ -17,10 +17,7 @@ import { assertUsableApiKey, LlmError, resolveImageAttachmentAccess, resolveRetr
 import type { ModelModality, RetryPolicyConfig } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-fs'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
-import {
-  SHARED_DEEPSEEK_API_KEY_ENV,
-  SHARED_DEEPSEEK_MODEL,
-} from '@deepseek-ai/dsh-auth'
+import { SHARED_DEEPSEEK_API_KEY_ENV } from '@deepseek-ai/dsh-auth'
 import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-session'
 import { launchEnvironmentOf, type LaunchEnvironmentSnapshot } from '@deepseek-ai/dsh-launch-environment'
@@ -90,11 +87,16 @@ export type * from './types.ts'
 export const name = 'llm-deepseek'
 export const inject = ['llm']
 
-const NS = 'llm-deepseek'
+/** Settings namespace for the official DeepSeek adapter and shared-model selection. */
+export const DEEPSEEK_SETTINGS_NAMESPACE = 'llm-deepseek'
 const DEFAULT_API_KEY_ENV = 'DEEPSEEK_API_KEY'
-export { SHARED_DEEPSEEK_API_KEY_ENV, SHARED_DEEPSEEK_MODEL } from '@deepseek-ai/dsh-auth'
+export { SHARED_DEEPSEEK_API_KEY_ENV } from '@deepseek-ai/dsh-auth'
 /** The single provider route this plugin owns. */
 export const PROVIDER = 'deepseek-official'
+/** Existing deployments share only Flash until an administrator selects more official models. */
+export const DEFAULT_SHARED_DEEPSEEK_MODELS = ['deepseek-v4-flash'] as const
+/** Maximum number of official models one shared credential may authorize. */
+export const MAX_SHARED_DEEPSEEK_MODELS = 32
 
 const DEFAULT_MODELS: DeepSeekCatalogModel[] = [
   {
@@ -144,6 +146,8 @@ export interface Config {
   defaultContextWindow?: number
   /** Advisory models shown by discovery consumers; defaults to V4 Flash, V4 Pro, and V4 Flash Vision Exp. */
   models?: DeepSeekCatalogModel[]
+  /** Official model ids authorized by the administrator-managed credential; defaults to V4 Flash when present. */
+  sharedModels?: string[]
   /** Maximum provider idle time while one stream read is outstanding (default five minutes). */
   streamIdleTimeoutMs?: number
   /** Maximum accumulated file-referenced image bytes per chat request (default 128 MiB). */
@@ -189,6 +193,7 @@ export const Config: z<Config> = z.object({
   maxTokens: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(DEFAULT_MAX_TOKENS),
   defaultContextWindow: z.number().step(1).min(1).default(DEFAULT_CONTEXT_WINDOW),
   models: z.array(catalogModel).default(DEFAULT_MODELS),
+  sharedModels: z.array(z.string().required()).max(MAX_SHARED_DEEPSEEK_MODELS),
   streamIdleTimeoutMs: z.number().min(Number.MIN_VALUE).max(MAX_TIMER_DELAY_MS).default(DEFAULT_STREAM_IDLE_TIMEOUT_MS),
   maxRequestFilesBytes: z.number().step(1).min(1).default(DEFAULT_MAX_REQUEST_FILES_BYTES),
   maxInlineRequestImageBytes: z.number().step(1).min(1).default(DEFAULT_MAX_INLINE_REQUEST_IMAGE_BYTES),
@@ -215,7 +220,10 @@ const BASE_URL_ENV = 'DEEPSEEK_BASE_URL'
  * previous generation, so a request can never pair a stale endpoint with a
  * newer key.
  */
-export type ResolvedDeepSeekOptions = DeepSeekConnectionOptions
+export type ResolvedDeepSeekOptions = DeepSeekConnectionOptions & {
+  /** Official model ids that may consume the administrator-managed credential. */
+  sharedModels: readonly string[]
+}
 
 /** Resolve, validate, and detach the advisory model catalog. */
 function resolveModels(models: readonly DeepSeekCatalogModel[] | undefined): DeepSeekCatalogModel[] {
@@ -284,6 +292,44 @@ function resolveModels(models: readonly DeepSeekCatalogModel[] | undefined): Dee
         : {},
     }
   })
+}
+
+/**
+ * Resolve the official model catalog exposed to administrator selection.
+ * @param config - current DeepSeek settings section.
+ * @returns a detached, validated catalog in provider order.
+ */
+export function deepSeekOfficialModelCatalog(config: Config): DeepSeekCatalogModel[] {
+  return resolveModels(config.models)
+}
+
+function resolveSharedDeepSeekModelIds(
+  models: readonly DeepSeekCatalogModel[],
+  configured: readonly string[] | undefined,
+): string[] {
+  const available = new Set(models.map(model => model.id))
+  const selected = configured === undefined || configured.length === 0
+    ? DEFAULT_SHARED_DEEPSEEK_MODELS.filter(model => available.has(model))
+    : configured
+  if (selected.length > MAX_SHARED_DEEPSEEK_MODELS) {
+    throw new Error(`llm-deepseek: sharedModels cannot contain more than ${String(MAX_SHARED_DEEPSEEK_MODELS)} ids`)
+  }
+  const seen = new Set<string>()
+  for (const model of selected) {
+    if (seen.has(model)) throw new Error(`llm-deepseek: sharedModels contains duplicate model "${model}"`)
+    if (!available.has(model)) throw new Error(`llm-deepseek: shared model "${model}" is absent from the official catalog`)
+    seen.add(model)
+  }
+  return [...selected]
+}
+
+/**
+ * Resolve the official model ids authorized by the shared deployment credential.
+ * @param config - current DeepSeek settings section.
+ * @returns selected ids in administrator order; an absent selection defaults to Flash when available.
+ */
+export function sharedDeepSeekModelIds(config: Config): string[] {
+  return resolveSharedDeepSeekModelIds(resolveModels(config.models), config.sharedModels)
 }
 
 /**
@@ -380,6 +426,7 @@ export function resolveAdapterOptions(config: Config, environment?: LaunchEnviro
     || fileQuotaCleanupBatch > 1_000) {
     throw new Error('llm-deepseek: fileQuotaCleanupBatch must be an integer from 1 through 1000')
   }
+  const models = resolveModels(config.models)
   return {
     apiKeyEnv: credentialRef(config.apiKeyEnv ?? DEFAULT_API_KEY_ENV),
     baseURL: config.baseURL
@@ -391,7 +438,8 @@ export function resolveAdapterOptions(config: Config, environment?: LaunchEnviro
     },
     maxTokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
     defaultContextWindow: config.defaultContextWindow ?? DEFAULT_CONTEXT_WINDOW,
-    models: resolveModels(config.models),
+    models,
+    sharedModels: resolveSharedDeepSeekModelIds(models, config.sharedModels),
     streamIdleTimeoutMs,
     maxRequestFilesBytes,
     maxInlineRequestImageBytes,
@@ -446,7 +494,7 @@ export function apply(ctx: Context, config: Config): void {
     const session = request.sessionId === undefined ? undefined : ctx.get('sessions')?.get(request.sessionId)
     const cwd = session?.header.cwd
     const owner = cwd === undefined ? undefined : auth?.ownerForProjectPath(cwd)
-    if (request.model === SHARED_DEEPSEEK_MODEL
+    if (connection.sharedModels.includes(request.model)
       && owner !== undefined
       && auth?.sharedDeepSeekPreference(owner.id).enabled === true
       && credentials !== undefined) {
@@ -501,7 +549,7 @@ export function apply(ctx: Context, config: Config): void {
     },
   })
   ctx.llm.registerConfigurableProviders([
-    { provider: PROVIDER, displayName: 'DeepSeek', settingsNs: NS, settingsPath: [] },
+    { provider: PROVIDER, displayName: 'DeepSeek', settingsNs: DEEPSEEK_SETTINGS_NAMESPACE, settingsPath: [] },
   ])
   // Route effects bind to this apply fiber via the stable `ctx` reference,
   // even when a swap runs inside the scoped settings callback below.
@@ -520,7 +568,7 @@ export function apply(ctx: Context, config: Config): void {
   }
 
   ctx.inject(['settings'], (settingsCtx) => {
-    settingsCtx.settings.installSection(ctx, NS, Config, config, {
+    settingsCtx.settings.installSection(ctx, DEEPSEEK_SETTINGS_NAMESPACE, Config, config, {
       setSource: (source) => {
         current = source
       },

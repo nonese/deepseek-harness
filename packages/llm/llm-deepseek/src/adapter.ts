@@ -112,16 +112,16 @@ export interface DeepSeekConnectionOptions {
 }
 
 /** Constructor options for {@link DeepSeekAdapter}: the operation-local resolution hooks the plugin owns. */
-export interface DeepSeekAdapterOptions {
+export interface DeepSeekAdapterOptions<TConnection extends DeepSeekConnectionOptions = DeepSeekConnectionOptions> {
   /** Current validated connection facts; called once per operation. */
-  options: () => DeepSeekConnectionOptions
+  options: () => TConnection
   /**
    * Resolve the bearer token for the connection facts of one request. The
    * snapshot is passed in — never re-read — so the key can only ever come
    * from the same resolution as the endpoint it is sent to. Throws `LlmError`
    * `MISSING_CREDENTIAL` when no key is available anywhere.
    */
-  resolveApiKey: (connection: DeepSeekConnectionOptions, options: GenerateOptions) => Promise<string>
+  resolveApiKey: (connection: TConnection, options: GenerateOptions) => Promise<string>
   /** Resolve the harness-home anonymous id shared with telemetry and feedback. */
   resolveUserId: () => AnonymousUserId
   /** Resolve the current durable attachment service; absence rejects image input. */
@@ -350,10 +350,10 @@ export function httpErrorCode(status: number, error?: WireError['error']): strin
  * One stable signal reaches both initial fetch and body reads. Caller aborts
  * map to `ABORTED`; the configured per-read idle watchdog maps to `TIMEOUT`.
  */
-export class DeepSeekAdapter extends LlmAdapter {
+export class DeepSeekAdapter<TConnection extends DeepSeekConnectionOptions = DeepSeekConnectionOptions> extends LlmAdapter {
   private readonly files: DeepSeekFileStore
 
-  constructor(private readonly config: DeepSeekAdapterOptions) {
+  constructor(private readonly config: DeepSeekAdapterOptions<TConnection>) {
     super()
     this.files = config.resolveFiles?.() ?? new DeepSeekFileStore()
   }
@@ -443,7 +443,7 @@ export class DeepSeekAdapter extends LlmAdapter {
 
   private async * streamWithConnection(
     options: GenerateOptions,
-    connection: DeepSeekConnectionOptions,
+    connection: TConnection,
   ): AsyncIterable<StreamChunk> {
     // One resolution per stream call: connection facts and the credential
     // freeze here and hold for this whole request, so an in-flight stream

@@ -53,6 +53,14 @@ interface OidcClientConfig {
 
 Web 部署把 `(issuer, sub) → UserId` 保存在 `<DSH_HOME>/system/auth/oidc.json`。这个不可变二元组是唯一的自动账号关联键。首选用户名冲突时会创建带后缀的 OIDC 用户名，而不会关联或覆盖本地账号。配置的管理员组只在新 OIDC 身份创建时选择角色；后续角色变更仍由 Harness 管理员控制。
 
+## 桌面设备
+
+Windows 桌面版通过系统浏览器授权流程复用同一 OIDC 依赖方。`POST /auth/desktop/activation/start` 接收新生成的 Ed25519 签名公钥和 X25519 加密公钥，返回服务器签名的激活请求，并提供 OIDC 授权 URL。回调创建普通 Harness 账号绑定后，`POST /auth/desktop/activation/complete` 要求待激活 Ed25519 密钥提供证明，才会返回签名设备授权和加密的组织模型配置。
+
+服务器把设备公钥记录与撤销状态持久化到 `<DSH_HOME>/system/auth/desktop-devices.json`；设备私钥永远不会离开 Windows 账号。设备授权按配置的时长有效，默认是 30 天。客户端在最后 7 天内续期，离线使用最多持续到签名的过期时间。`POST /auth/desktop/lease/renew` 与 `POST /auth/desktop/config/sync` 同时要求有效设备授权和新鲜的设备证明。撤销会阻止后续续期与同步，但无法让已经签发的离线授权提前失效。
+
+服务器签名私有 JWK 只生成一次，并由 credentials 提供方保存在 `HARNESS_DESKTOP_SIGNING_PRIVATE_JWK` 下。管理员通过 `GET /auth/system/desktop/signing-key` 取得对应的公开 JWK，并使用 `DSH_DESKTOP_SERVER_SIGNING_PUBLIC_JWK` Actions 变量把它固定进安装包；通过 `GET /auth/system/desktop/devices` 列出设备，通过 `POST /auth/system/desktop/devices/:id/revoke` 撤销一台设备。这些管理路由永远不会返回私有 JWK 或组织模型 API Key。
+
 ## 管理员统一模型凭据选择
 
 ```ts type-equiv
@@ -257,6 +265,41 @@ abstract sharedDeepSeekPreference(userId: UserId): SharedDeepSeekPreference
  * @param enabled - whether matching model requests may use managed credentials.
  */
 abstract setSharedDeepSeekPreference(userId: UserId, enabled: boolean): Promise<void>
+
+/**
+ * Register one desktop installation after its OIDC activation succeeds.
+ * @param input - authenticated owner, display label, version, and public keys.
+ * @returns the durable device record.
+ */
+abstract registerDesktopDevice(input: RegisterDesktopDeviceInput): Promise<DesktopDevice>
+
+/**
+ * Read one desktop installation.
+ * @param deviceId - stable device identity.
+ * @returns the detached record, or `undefined` when absent.
+ */
+abstract getDesktopDevice(deviceId: DesktopDeviceId): DesktopDevice | undefined
+
+/**
+ * List desktop installations in creation order.
+ * @returns detached records for administration.
+ */
+abstract listDesktopDevices(): readonly DesktopDevice[]
+
+/**
+ * Record one successful lease or configuration operation.
+ * @param deviceId - device that proved possession of its signing key.
+ * @param leaseExpiresAt - renewed lease expiration, when the operation issued one.
+ * @returns the updated detached record.
+ */
+abstract touchDesktopDevice(deviceId: DesktopDeviceId, leaseExpiresAt?: string): Promise<DesktopDevice>
+
+/**
+ * Revoke one desktop installation. Repeating the operation is a no-op.
+ * @param deviceId - device to revoke.
+ * @returns the detached revoked record.
+ */
+abstract revokeDesktopDevice(deviceId: DesktopDeviceId): Promise<DesktopDevice>
 
 /**
  * Resolve which user owns a path inside a program-managed project tree.

@@ -57,6 +57,7 @@ kind: "package-reference"
 | `maxTokens` | `256,000` | 单次请求输出上限；模型自身上限与显式请求值优先 |
 | `defaultContextWindow` | `1,000,000` | 无精确值模型的容量回退 |
 | `models` | V4 Flash + V4 Pro + V4 Flash Vision Exp | 供发现消费方查看的建议性目录 |
+| `sharedModels` | V4 Flash | 管理员统一凭据授权使用的官方目录 ID；经过认证的 Web 系统设置页负责该选择 |
 | `streamIdleTimeoutMs` | `300,000` | 单次流读取未完成的最大提供方空闲时间 |
 | `maxRequestFilesBytes` | `128 MiB` | 按最旧优先卸载前保留的请求图片字节高水位 |
 | `maxInlineRequestImageBytes` | `20 MiB` | 独立的 base64 回退高水位 |
@@ -72,7 +73,7 @@ kind: "package-reference"
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-llm-deepseek)是每个受支持字段及其 JSDoc 的穷尽式真源。
 
-多用户 Web 部署可以为 `deepseek-v4-flash` 提供专用的 `HARNESS_SHARED_DEEPSEEK_API_KEY` 凭据。只有当实时会话路径属于活动用户且该用户显式启用统一凭据时，解析器才会选择它。否则，受管用户项目只从该所有者的个人凭据 scope 解析普通 `apiKeyEnv`，绝不会继承其他用户或进程凭据 provider。仅当用户偏好与统一凭据同时生效时，适配器才把 Flash 条目标记为托管，因此浏览器既不会收到统一 Key，也不会要求符合条件的用户配置个人 Key。
+多用户 Web 部署可以为一个或多个 `sharedModels` 提供专用的 `HARNESS_SHARED_DEEPSEEK_API_KEY` 凭据。只有当实时 Session 使用已选官方模型、属于活动用户且该用户显式启用统一凭据时，解析器才会选择它。否则，受管用户项目只从该所有者的个人凭据 scope 解析普通 `apiKeyEnv`，绝不会继承其他用户或进程凭据提供方。没有个人 Key 时，已启用用户的模型目录只包含管理员所选官方条目；拥有个人 Key 时，未选官方条目仍可通过该私有凭据使用。浏览器绝不会收到统一 Key。
 
 ### 带 thinking 与图片的流式调用
 

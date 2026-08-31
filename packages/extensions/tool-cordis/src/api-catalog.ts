@@ -607,6 +607,36 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [{ name: 'userId', description: 'stable user identity whose preference changes.' }, { name: 'enabled', description: 'whether matching model requests may use managed credentials.' }],
       },
       {
+        signature: 'abstract registerDesktopDevice(input: RegisterDesktopDeviceInput): Promise<DesktopDevice>',
+        description: 'Register one desktop installation after its OIDC activation succeeds.',
+        parameters: [{ name: 'input', description: 'authenticated owner, display label, version, and public keys.' }],
+        returns: 'the durable device record.',
+      },
+      {
+        signature: 'abstract getDesktopDevice(deviceId: DesktopDeviceId): DesktopDevice | undefined',
+        description: 'Read one desktop installation.',
+        parameters: [{ name: 'deviceId', description: 'stable device identity.' }],
+        returns: 'the detached record, or `undefined` when absent.',
+      },
+      {
+        signature: 'abstract listDesktopDevices(): readonly DesktopDevice[]',
+        description: 'List desktop installations in creation order.',
+        parameters: [],
+        returns: 'detached records for administration.',
+      },
+      {
+        signature: 'abstract touchDesktopDevice(deviceId: DesktopDeviceId, leaseExpiresAt?: string): Promise<DesktopDevice>',
+        description: 'Record one successful lease or configuration operation.',
+        parameters: [{ name: 'deviceId', description: 'device that proved possession of its signing key.' }, { name: 'leaseExpiresAt', description: 'renewed lease expiration, when the operation issued one.' }],
+        returns: 'the updated detached record.',
+      },
+      {
+        signature: 'abstract revokeDesktopDevice(deviceId: DesktopDeviceId): Promise<DesktopDevice>',
+        description: 'Revoke one desktop installation. Repeating the operation is a no-op.',
+        parameters: [{ name: 'deviceId', description: 'device to revoke.' }],
+        returns: 'the detached revoked record.',
+      },
+      {
         signature: 'abstract ownerForProjectPath(path: string): AuthUser | undefined',
         description: 'Resolve which user owns a path inside a program-managed project tree.',
         parameters: [{ name: 'path', description: 'absolute project or descendant path to classify.' }],
@@ -4127,6 +4157,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type DeepSeekLlmApiJson = null | boolean | number | string | DeepSeekLlmApiJson[] | {\n    [key: string]: DeepSeekLlmApiJson;\n};',
   },
   {
+    name: 'DesktopDevice',
+    declaration: 'export interface DesktopDevice {\n    id: DesktopDeviceId;\n    userId: UserId;\n    label: string;\n    appVersion: string;\n    signaturePublicJwk: DesktopDevicePublicJwk;\n    encryptionPublicJwk: DesktopDevicePublicJwk;\n    createdAt: string;\n    lastSeenAt: string;\n    leaseExpiresAt?: string;\n    revokedAt?: string;\n}',
+  },
+  {
+    name: 'DesktopDeviceId',
+    declaration: 'export type DesktopDeviceId = Branded<\'DesktopDeviceId\'>;',
+  },
+  {
+    name: 'DesktopDevicePublicJwk',
+    declaration: 'export interface DesktopDevicePublicJwk {\n    kty: string;\n    crv: string;\n    x: string;\n    alg?: string;\n    use?: string;\n    key_ops?: readonly string[];\n    ext?: boolean;\n}',
+  },
+  {
     name: 'DiffCallView',
     declaration: 'export interface DiffCallView {\n    card: \'diff\';\n    title: string;\n    diffs: FileDiff[];\n    locations?: FileLocation[];\n}',
   },
@@ -4957,6 +4999,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'RedactedSecret',
     declaration: 'export interface RedactedSecret {\n    path: string[];\n    set: boolean;\n}',
+  },
+  {
+    name: 'RegisterDesktopDeviceInput',
+    declaration: 'export interface RegisterDesktopDeviceInput {\n    userId: UserId;\n    label: string;\n    appVersion: string;\n    signaturePublicJwk: DesktopDevicePublicJwk;\n    encryptionPublicJwk: DesktopDevicePublicJwk;\n}',
   },
   {
     name: 'RemoteError',

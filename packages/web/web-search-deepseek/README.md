@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-With `dsh-web-search-deepseek`, the harness searches the web through DeepSeek's native search using the initiating user's DeepSeek credential. An opted-in managed Flash session uses the administrator's official-site key; another managed user session uses only that owner's `DEEPSEEK_API_KEY`. Choose it when a deployment wants DeepSeek native search and accepts that one search costs a full model turn in latency and tokens, because DeepSeek exposes no dedicated search endpoint. Results come from the structured search blocks DeepSeek returns, never from scraping text out of a reply. A missing credential fails the call with a structured error; a response without a search-result block fails loudly rather than degrading. The model-facing `web_search` tool lives in `dsh-tool-web`.
+With `dsh-web-search-deepseek`, the harness searches the web through DeepSeek's native search using the initiating user's DeepSeek credential. An opted-in Session on an administrator-selected official model uses the official-site key; another managed user Session uses only that owner's `DEEPSEEK_API_KEY`. Choose it when a deployment wants DeepSeek native search and accepts that one search costs a full model turn in latency and tokens, because DeepSeek exposes no dedicated search endpoint. Results come from the structured search blocks DeepSeek returns, never from scraping text out of a reply. A missing credential fails the call with a structured error; a response without a search-result block fails loudly rather than degrading. The model-facing `web_search` tool lives in `dsh-tool-web`.
 
 ## Table of Contents
 
@@ -33,7 +33,7 @@ Choose this backend when a deployment wants DeepSeek's native server-side web se
 
 ### Minimal configuration
 
-Load the web service and the provider. In an authenticated multi-user composition, the key resolves from the initiating session owner: the opted-in official Flash route uses `HARNESS_SHARED_DEEPSEEK_API_KEY`, and every other managed route uses the owner's isolated `DEEPSEEK_API_KEY`. Other compositions resolve from `ctx.credentials` when that service is mounted, otherwise from the process environment. The search endpoint uses the Anthropic-compatible base (`https://api.deepseek.com/anthropic/v1`), distinct from the chat-completions base the LLM adapter uses — never reuse `$DEEPSEEK_BASE_URL`.
+Load the web service and the provider. In an authenticated multi-user composition, the key resolves from the initiating Session owner: an opted-in official route whose current model is in `llm-deepseek.sharedModels` uses `HARNESS_SHARED_DEEPSEEK_API_KEY`, and every other managed route uses the owner's isolated `DEEPSEEK_API_KEY`. Other compositions resolve from `ctx.credentials` when that service is mounted, otherwise from the process environment. The search endpoint uses the Anthropic-compatible base (`https://api.deepseek.com/anthropic/v1`), distinct from the chat-completions base the LLM adapter uses — never reuse `$DEEPSEEK_BASE_URL`.
 
 ```yaml
 - name: '@deepseek-ai/dsh-web'
@@ -82,7 +82,7 @@ This section explains the design decisions behind the provider; the observable b
 The provider is built on two commitments:
 
 - **Structured blocks only.** DeepSeek runs the search server-side and returns structured `web_search_tool_result` blocks; the provider parses those blocks and never scrapes URLs out of model prose. In strict mode, a response with no such block throws `WEB_PROVIDER_ERROR` instead of degrading.
-- **One owner, resolved per search.** The provider resolves the initiating session before reading a secret. An opted-in official Flash session uses the administrator-managed reference; another managed user session reads only that owner's `DEEPSEEK_API_KEY`. Outside the authenticated carrier, a mounted credentials service is authoritative and the launching environment is the final fallback. Resolving per call means a key stored or rotated in the Web Models page reaches the next search without a restart.
+- **One owner, resolved per search.** The provider resolves the initiating Session before reading a secret. An opted-in Session on an administrator-selected official model uses the managed reference; another managed user Session reads only that owner's `DEEPSEEK_API_KEY`. Outside the authenticated carrier, a mounted credentials service is authoritative and the launching environment is the final fallback. Resolving per call means a key stored or rotated in the Web Models page reaches the next search without a restart.
 
 ### Source map
 

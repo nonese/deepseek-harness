@@ -11,6 +11,7 @@
     { "path": "../../api/workspace-controller/tsconfig.host.json" },
     { "path": "../../client/connection/tsconfig.host.json" },
     { "path": "../../credentials/credentials" },
+    { "path": "../../identity/desktop-auth" },
     { "path": "../../llm/llm" },
     { "path": "../../llm/llm-deepseek" },
     { "path": "../../llm/llm-pi-ai" },

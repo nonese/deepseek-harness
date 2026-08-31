@@ -537,19 +537,12 @@
   white-space: nowrap;
 }
 
-.managedModelChips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 0 20px 18px;
-}
-
-.managedModelChips code {
-  padding: 5px 8px;
-  border-radius: 6px;
-  background: var(--dsw-static-neutral-bluish-75);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+.managedSiteHelp {
+  margin: 0;
+  padding: 0 20px 16px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+  line-height: 19px;
 }
 
 .managedSiteFormGrid {

@@ -1,5 +1,5 @@
 ---
-description: "The identity package group: anonymous, per-harness-home correlation ids shared by telemetry, feedback, and DeepSeek provider requests."
+description: "Identity packages for anonymous installation ids, multi-user server accounts, and signed desktop device authorization."
 kind: "package-group"
 ---
 
@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-The identity group provides one anonymous id per harness home that the installation's telemetry, feedback, and DeepSeek requests attach to their records, so everything leaving one home can be recognized as coming from the same installation without identifying the user. There is nothing to configure: the id appears automatically the first time one of those features runs and stays stable until its file is deleted. The group has one package; this page maps it, and the package README owns the details.
+The identity group contains the anonymous installation id, the server authentication seam and file provider, and the cryptographic protocol used to authorize packaged desktop devices. Server users and desktop devices use opaque stable ids; usernames never select storage paths. Each package README owns its storage and trust rules.
 
 ## Table of Contents
 
@@ -23,6 +23,9 @@ The identity group provides one anonymous id per harness home that the installat
 | Package | Role |
 |---|---|
 | [`anonymous-user-id`](anonymous-user-id/README.md) | Gives every harness home one anonymous id that telemetry, feedback, and DeepSeek requests attach to their records, so records from one installation can be recognized without identifying the user |
+| [`auth`](auth/README.md) | Server-user, role, OIDC binding, path, and desktop-device capability definitions |
+| [`auth-file`](auth-file/README.md) | Owner-only file provider for accounts, browser sessions, OIDC identities, and desktop devices |
+| [`desktop-auth`](desktop-auth/README.md) | Signed activation, device proofs, offline leases, and encrypted organization model configuration |
 
 <a id="related-documentation"></a>
 ## Related documentation

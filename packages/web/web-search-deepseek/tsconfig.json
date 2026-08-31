@@ -36,6 +36,9 @@
       "path": "../../identity/auth"
     },
     {
+      "path": "../../llm/llm-deepseek"
+    },
+    {
       "path": "../../settings/settings"
     },
     {

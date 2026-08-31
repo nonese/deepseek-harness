@@ -1,0 +1,40 @@
+{
+  "name": "@deepseek-ai/dsh-desktop",
+  "productName": "奉中附小 DSH",
+  "description": "Windows desktop distribution of the DeepSeek Harness",
+  "version": "0.1.2-alpha.2",
+  "type": "module",
+  "main": "lib/main.js",
+  "author": "奉中附小",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "directory": "apps/desktop"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "lib/*.js",
+    "assets",
+    "desktop.config.example.json",
+    "forge.config.cjs"
+  ],
+  "scripts": {
+    "build": "tsc -b && tsdown --config tsdown.config.ts",
+    "make": "electron-forge make --platform win32 --arch x64 --config forge.config.cjs"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-atomic-write": "workspace:^",
+    "@deepseek-ai/dsh-credentials-windows": "workspace:^",
+    "@deepseek-ai/dsh-desktop-auth": "workspace:^",
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "7.11.2",
+    "@electron-forge/maker-squirrel": "7.11.2",
+    "electron": "44.1.0",
+    "tsdown": "0.21.4"
+  }
+}

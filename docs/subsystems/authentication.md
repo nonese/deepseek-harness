@@ -53,6 +53,14 @@ The administrator saves these non-secret fields through `PUT /auth/system/oidc`.
 
 The Web deployment stores `(issuer, sub) → UserId` in `<DSH_HOME>/system/auth/oidc.json`. That immutable pair is the only automatic account-link key. A preferred username collision creates a suffixed OIDC username instead of linking or overwriting the local account. The configured administrator group selects the role only when a new OIDC identity is created; later role changes remain under Harness administrator control.
 
+## Desktop devices
+
+The Windows desktop uses the same OIDC relying party through a system-browser authorization flow. `POST /auth/desktop/activation/start` accepts fresh Ed25519 signing and X25519 encryption public keys, returns a server-signed activation request, and supplies an OIDC authorization URL. After the callback creates the ordinary Harness account binding, `POST /auth/desktop/activation/complete` requires a proof from the pending Ed25519 key before it returns a signed device lease and an encrypted organization-model configuration.
+
+The server persists public device records and revocation state in `<DSH_HOME>/system/auth/desktop-devices.json`; device private keys never leave the Windows account. Leases are valid for the configured period, defaulting to 30 days. The client renews during the final seven days and may continue offline only until the signed expiry. `POST /auth/desktop/lease/renew` and `POST /auth/desktop/config/sync` require both a valid lease and a fresh device proof. Revocation prevents later renewal and synchronization but cannot invalidate an already-issued offline lease before its signed expiry.
+
+The server signing private JWK is generated once and stored by the credentials provider under `HARNESS_DESKTOP_SIGNING_PRIVATE_JWK`. An administrator obtains the corresponding public JWK from `GET /auth/system/desktop/signing-key`, pins it into the installer through the `DSH_DESKTOP_SERVER_SIGNING_PUBLIC_JWK` Actions variable, lists devices through `GET /auth/system/desktop/devices`, and revokes one through `POST /auth/system/desktop/devices/:id/revoke`. The private JWK and organization model API keys are never returned by these administration routes.
+
 ## Administrator-managed model credential choice
 
 ```ts type-equiv
@@ -257,6 +265,41 @@ abstract sharedDeepSeekPreference(userId: UserId): SharedDeepSeekPreference
  * @param enabled - whether matching model requests may use managed credentials.
  */
 abstract setSharedDeepSeekPreference(userId: UserId, enabled: boolean): Promise<void>
+
+/**
+ * Register one desktop installation after its OIDC activation succeeds.
+ * @param input - authenticated owner, display label, version, and public keys.
+ * @returns the durable device record.
+ */
+abstract registerDesktopDevice(input: RegisterDesktopDeviceInput): Promise<DesktopDevice>
+
+/**
+ * Read one desktop installation.
+ * @param deviceId - stable device identity.
+ * @returns the detached record, or `undefined` when absent.
+ */
+abstract getDesktopDevice(deviceId: DesktopDeviceId): DesktopDevice | undefined
+
+/**
+ * List desktop installations in creation order.
+ * @returns detached records for administration.
+ */
+abstract listDesktopDevices(): readonly DesktopDevice[]
+
+/**
+ * Record one successful lease or configuration operation.
+ * @param deviceId - device that proved possession of its signing key.
+ * @param leaseExpiresAt - renewed lease expiration, when the operation issued one.
+ * @returns the updated detached record.
+ */
+abstract touchDesktopDevice(deviceId: DesktopDeviceId, leaseExpiresAt?: string): Promise<DesktopDevice>
+
+/**
+ * Revoke one desktop installation. Repeating the operation is a no-op.
+ * @param deviceId - device to revoke.
+ * @returns the detached revoked record.
+ */
+abstract revokeDesktopDevice(deviceId: DesktopDeviceId): Promise<DesktopDevice>
 
 /**
  * Resolve which user owns a path inside a program-managed project tree.

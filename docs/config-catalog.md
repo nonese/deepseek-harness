@@ -409,7 +409,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/identity/auth-file/src/index.ts:89`](../packages/identity/auth-file/src/index.ts)
+Source: [`packages/identity/auth-file/src/index.ts:98`](../packages/identity/auth-file/src/index.ts)
 
 <a id="deepseek-aidsh-bash-local"></a>
 
@@ -639,6 +639,22 @@ export interface Config {
 ```
 
 Source: [`packages/credentials/credentials-local/src/index.ts:64`](../packages/credentials/credentials-local/src/index.ts)
+
+<a id="deepseek-aidsh-credentials-windows"></a>
+
+## `@deepseek-ai/dsh-credentials-windows`
+
+```ts config-catalog
+/** Plugin config for the encrypted document. */
+export interface Config {
+  /** Encrypted document path; defaults under the resolved DSH home. */
+  path?: string
+  /** Harness home used when `path` is omitted. */
+  dshHome?: string
+}
+```
+
+Source: [`packages/credentials/credentials-windows/src/index.ts:48`](../packages/credentials/credentials-windows/src/index.ts)
 
 <a id="deepseek-aidsh-e2b"></a>
 
@@ -947,10 +963,16 @@ export interface Config {
   oidcTokenEndpointCreatedCompatibility?: boolean
   /** Maximum uploaded project file size. Defaults to 50 MiB. */
   projectFileUploadMaxBytes?: number
+  /** Fixed public origin accepted by desktop leases. Omit to disable desktop activation. */
+  desktopIssuer?: string
+  /** Credential reference containing the server Ed25519 private JWK. */
+  desktopSigningPrivateJwkRef?: string
+  /** Offline desktop lease duration in days. Defaults to 30. */
+  desktopLeaseDays?: number
 }
 ```
 
-Source: [`packages/host/auth-web/src/index.ts:69`](../packages/host/auth-web/src/index.ts)
+Source: [`packages/host/auth-web/src/index.ts:85`](../packages/host/auth-web/src/index.ts)
 
 <a id="deepseek-aidsh-host-directory-picker-browse"></a>
 
@@ -1105,6 +1127,8 @@ export interface Config {
   defaultContextWindow?: number
   /** Advisory models shown by discovery consumers; defaults to V4 Flash, V4 Pro, and V4 Flash Vision Exp. */
   models?: DeepSeekCatalogModel[]
+  /** Official model ids authorized by the administrator-managed credential; defaults to V4 Flash when present. */
+  sharedModels?: string[]
   /** Maximum provider idle time while one stream read is outstanding (default five minutes). */
   streamIdleTimeoutMs?: number
   /** Maximum accumulated file-referenced image bytes per chat request (default 128 MiB). */
@@ -1154,7 +1178,7 @@ export interface DeepSeekCatalogModel {
 
 Depends on: [`ModelModality`](../packages/llm/llm/src/index.ts) · [`RetryPolicyConfig`](../packages/llm/llm/src/index.ts)
 
-Source: [`packages/llm/llm-deepseek/src/index.ts:132`](../packages/llm/llm-deepseek/src/index.ts)
+Source: [`packages/llm/llm-deepseek/src/index.ts:134`](../packages/llm/llm-deepseek/src/index.ts)
 
 <a id="deepseek-aidsh-llm-pi-ai"></a>
 
@@ -3425,7 +3449,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/web/web-search-deepseek/src/index.ts:51`](../packages/web/web-search-deepseek/src/index.ts)
+Source: [`packages/web/web-search-deepseek/src/index.ts:53`](../packages/web/web-search-deepseek/src/index.ts)
 
 <a id="deepseek-aidsh-web-search-exa"></a>
 
@@ -3653,6 +3677,8 @@ Imported as libraries by other packages; a `cordis.yml` cannot load them.
 - `@deepseek-ai/dsh-cmdline` ([`packages/boot/cmdline/src/index.ts`](../packages/boot/cmdline/src/index.ts))
 - `@deepseek-ai/dsh-code-runtime-python` ([`packages/code-runtime/code-runtime-python/src/index.ts`](../packages/code-runtime/code-runtime-python/src/index.ts))
 - `@deepseek-ai/dsh-deque` ([`packages/util/deque/src/index.ts`](../packages/util/deque/src/index.ts))
+- `@deepseek-ai/dsh-desktop-app` ([`packages/bundle/desktop-app/src/index.ts`](../packages/bundle/desktop-app/src/index.ts))
+- `@deepseek-ai/dsh-desktop-auth` ([`packages/identity/desktop-auth/src/index.ts`](../packages/identity/desktop-auth/src/index.ts))
 - `@deepseek-ai/dsh-experimental-agent-team-profile` ([`packages/experimental/agent-team-profile/src/index.ts`](../packages/experimental/agent-team-profile/src/index.ts))
 - `@deepseek-ai/dsh-experimental-agent-team-web-profile` ([`packages/experimental/agent-team-web-profile/src/index.ts`](../packages/experimental/agent-team-web-profile/src/index.ts))
 - `@deepseek-ai/dsh-experimental-webworker-packer` ([`packages/experimental/webworker-packer/src/index.ts`](../packages/experimental/webworker-packer/src/index.ts))

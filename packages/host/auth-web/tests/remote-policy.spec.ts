@@ -57,7 +57,8 @@ function fixture(): {
   bob: UserPaths
   optedIn: { value: boolean }
   credentialConfigured: { value: boolean }
-  modelSettings: { providers: Record<string, unknown> }
+  personalCredentialConfigured: { value: boolean }
+  modelSettings: { providers: Record<string, unknown>; sharedModels?: string[] }
   liveSessions: Map<string, { header: { cwd?: string } }>
   workspaces: Map<string, { path: string }>
   inspectError: { value?: Error }
@@ -71,7 +72,8 @@ function fixture(): {
   const current = { value: principal(user('alice')) }
   const optedIn = { value: true }
   const credentialConfigured = { value: true }
-  const modelSettings: { providers: Record<string, unknown> } = { providers: {} }
+  const personalCredentialConfigured = { value: false }
+  const modelSettings: { providers: Record<string, unknown>; sharedModels?: string[] } = { providers: {} }
   const liveSessions = new Map<string, { header: { cwd?: string } }>()
   const workspaces = new Map<string, { path: string }>()
   const inspectError: { value?: Error } = {}
@@ -93,6 +95,9 @@ function fixture(): {
     },
     userCredentials: {
       current: () => ({}),
+      forOwner: () => ({
+        describe: () => Promise.resolve({ configured: personalCredentialConfigured.value, writable: true }),
+      }),
     },
     settings: {
       writable: true,
@@ -117,6 +122,7 @@ function fixture(): {
     bob,
     optedIn,
     credentialConfigured,
+    personalCredentialConfigured,
     modelSettings,
     liveSessions,
     workspaces,
@@ -219,8 +225,9 @@ describe('per-user Remote policy', () => {
     expect(denied).toMatchObject({ code: 'auth/not-found' })
   })
 
-  it('publishes the administrator-managed Flash route only to an opted-in user', async () => {
-    const { ctx, optedIn } = fixture()
+  it('publishes every administrator-selected official model only to an opted-in user', async () => {
+    const { ctx, modelSettings, optedIn } = fixture()
+    modelSettings.sharedModels = ['deepseek-v4-flash', 'deepseek-v4-pro']
     const policy = userScopedRemotePolicy(ctx)
     const directory = [{
       provider: 'deepseek-official',
@@ -231,13 +238,63 @@ describe('per-user Remote policy', () => {
     await expect(policy.invoke(
       request('llm', 'listConfigurableProviders'),
       () => Promise.resolve(directory),
-    )).resolves.toEqual([{ ...directory[0], managedModels: ['deepseek-v4-flash'] }])
+    )).resolves.toEqual([{
+      ...directory[0],
+      managedModels: ['deepseek-v4-flash', 'deepseek-v4-pro'],
+    }])
 
     optedIn.value = false
     await expect(policy.invoke(
       request('llm', 'listConfigurableProviders'),
       () => Promise.resolve(directory),
     )).resolves.toEqual(directory)
+  })
+
+  it('limits the official catalog to shared models only when the user has no personal key', async () => {
+    const { ctx, modelSettings, personalCredentialConfigured } = fixture()
+    modelSettings.sharedModels = ['deepseek-v4-pro', 'deepseek-v4-flash']
+    const policy = userScopedRemotePolicy(ctx)
+    const catalog = {
+      default: { provider: 'deepseek-official', model: 'deepseek-v4-flash-vision-exp' },
+      routableProviders: ['deepseek-official', 'local'],
+      groups: [
+        {
+          id: 'deepseek-official',
+          name: 'DeepSeek',
+          models: [
+            { id: 'deepseek-v4-flash', name: 'Flash' },
+            { id: 'deepseek-v4-pro', name: 'Pro' },
+            { id: 'deepseek-v4-flash-vision-exp', name: 'Vision' },
+          ],
+        },
+        { id: 'local', name: 'Local', models: [{ id: 'local-model', name: 'Local' }] },
+      ],
+      failures: [],
+    }
+
+    await expect(policy.invoke(
+      request('session', 'modelCatalog'),
+      () => Promise.resolve(catalog),
+    )).resolves.toEqual({
+      ...catalog,
+      default: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
+      groups: [
+        {
+          ...catalog.groups[0],
+          models: [
+            { id: 'deepseek-v4-flash', name: 'Flash' },
+            { id: 'deepseek-v4-pro', name: 'Pro' },
+          ],
+        },
+        catalog.groups[1],
+      ],
+    })
+
+    personalCredentialConfigured.value = true
+    await expect(policy.invoke(
+      request('session', 'modelCatalog'),
+      () => Promise.resolve(catalog),
+    )).resolves.toEqual(catalog)
   })
 
   it('hides a custom managed site until its user opts in', async () => {

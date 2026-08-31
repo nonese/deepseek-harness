@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib/types",
+    "lib": ["ES2024", "DOM"]
+  },
+  "include": ["src"],
+  "references": [
+    { "path": "../../packages/util/atomic-write" },
+    { "path": "../../packages/credentials/credentials-windows" },
+    { "path": "../../packages/identity/desktop-auth" }
+  ]
+}

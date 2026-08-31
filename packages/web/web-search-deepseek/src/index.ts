@@ -9,10 +9,12 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-agent'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
+import { SHARED_DEEPSEEK_API_KEY_ENV } from '@deepseek-ai/dsh-auth'
 import {
-  SHARED_DEEPSEEK_API_KEY_ENV,
-  SHARED_DEEPSEEK_MODEL,
-} from '@deepseek-ai/dsh-auth'
+  DEEPSEEK_SETTINGS_NAMESPACE,
+  sharedDeepSeekModelIds,
+  type Config as DeepSeekConfig,
+} from '@deepseek-ai/dsh-llm-deepseek'
 import type {} from '@deepseek-ai/dsh-settings'
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
 import type {} from '@deepseek-ai/dsh-session'
@@ -112,8 +114,9 @@ function resolveOptions(ctx: Context, config: Config): DeepSeekSearchProviderOpt
       const owner = cwd === undefined ? undefined : auth?.ownerForProjectPath(cwd)
       if (owner !== undefined) {
         const route = session?.requestContext()
+        const deepSeekConfig = ctx.get('settings')?.get(DEEPSEEK_SETTINGS_NAMESPACE) as DeepSeekConfig | undefined
         if (route?.provider === DEEPSEEK_PROVIDER_ID
-          && route.model === SHARED_DEEPSEEK_MODEL
+          && sharedDeepSeekModelIds(deepSeekConfig ?? {}).includes(route.model)
           && auth?.sharedDeepSeekPreference(owner.id).enabled === true
           && credentials !== undefined) {
           const managed = await credentials.resolve(credentialRef(SHARED_DEEPSEEK_API_KEY_ENV))

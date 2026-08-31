@@ -17,10 +17,14 @@ import {
   type AuthPrincipal,
   type AuthUser,
   type CreateLocalUserInput,
+  type DesktopDevice,
+  type DesktopDeviceId,
+  type DesktopDevicePublicJwk,
   type IssuedAuthSession,
   type OidcClientAuthMethod,
   type OidcClientConfig,
   type OidcLoginInput,
+  type RegisterDesktopDeviceInput,
   type UpdateUserInput,
   type UserId,
   type UserPaths,
@@ -83,6 +87,11 @@ interface OidcDocument {
   version: number
   config?: OidcClientConfig
   identities: StoredOidcIdentity[]
+}
+
+interface DesktopDevicesDocument {
+  version: number
+  devices: DesktopDevice[]
 }
 
 /** File-provider configuration. */
@@ -271,6 +280,51 @@ async function assertPrivateFile(filename: string): Promise<void> {
   }
 }
 
+function normalizedDesktopText(value: string, field: string): string {
+  const normalized = value.normalize('NFKC').trim()
+  if (normalized.length === 0 || normalized.length > 80) {
+    throw new AuthError('INVALID_INPUT', `${field}长度必须为 1–80 个字符`)
+  }
+  return normalized
+}
+
+function assertDesktopPublicJwk(value: DesktopDevicePublicJwk, curve: 'Ed25519' | 'X25519'): void {
+  const fields = value as DesktopDevicePublicJwk & { d?: unknown }
+  if (fields.kty !== 'OKP' || fields.crv !== curve || typeof fields.x !== 'string' || fields.x.length === 0
+    || fields.d !== undefined) {
+    throw new AuthError('INVALID_INPUT', `桌面设备必须提供不含私钥的 ${curve} 公钥`)
+  }
+}
+
+function assertDesktopDevices(value: unknown): asserts value is DesktopDevice[] {
+  if (!Array.isArray(value)) throw new Error('auth-file: invalid desktop devices document')
+  const ids = new Set<string>()
+  for (const candidate of value) {
+    if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) {
+      throw new Error('auth-file: invalid desktop device record')
+    }
+    const device = candidate as Partial<DesktopDevice>
+    if (typeof device.id !== 'string' || device.id.length === 0 || ids.has(device.id)
+      || typeof device.userId !== 'string' || device.userId.length === 0
+      || typeof device.label !== 'string' || device.label.length === 0
+      || typeof device.appVersion !== 'string' || device.appVersion.length === 0
+      || typeof device.createdAt !== 'string' || !Number.isFinite(Date.parse(device.createdAt))
+      || typeof device.lastSeenAt !== 'string' || !Number.isFinite(Date.parse(device.lastSeenAt))
+      || (device.leaseExpiresAt !== undefined && !Number.isFinite(Date.parse(device.leaseExpiresAt)))
+      || (device.revokedAt !== undefined && !Number.isFinite(Date.parse(device.revokedAt)))
+      || device.signaturePublicJwk === undefined || device.encryptionPublicJwk === undefined) {
+      throw new Error('auth-file: invalid desktop device record')
+    }
+    try {
+      assertDesktopPublicJwk(device.signaturePublicJwk, 'Ed25519')
+      assertDesktopPublicJwk(device.encryptionPublicJwk, 'X25519')
+    } catch {
+      throw new Error('auth-file: invalid desktop device public key')
+    }
+    ids.add(device.id)
+  }
+}
+
 /** File-backed authentication service. */
 export class FileAuthService extends AuthService {
   static Config: z<Config> = z.object({
@@ -287,6 +341,7 @@ export class FileAuthService extends AuthService {
   private sharedDeepSeekUserIds = new Set<UserId>()
   private oidcConfig: OidcClientConfig | undefined
   private oidcIdentities: StoredOidcIdentity[] = []
+  private desktopDevices: DesktopDevice[] = []
   private writes: Promise<void> = Promise.resolve()
   private closed = false
 
@@ -315,6 +370,10 @@ export class FileAuthService extends AuthService {
     return join(this.systemRoot, 'oidc.json')
   }
 
+  private get desktopDevicesFile(): string {
+    return join(this.systemRoot, 'desktop-devices.json')
+  }
+
   async* [Service.init](): AsyncGenerator<() => Promise<void>, void, void> {
     yield async () => {
       this.closed = true
@@ -328,6 +387,7 @@ export class FileAuthService extends AuthService {
       assertPrivateFile(this.sessionsFile),
       assertPrivateFile(this.preferencesFile),
       assertPrivateFile(this.oidcFile),
+      assertPrivateFile(this.desktopDevicesFile),
     ])
     const usersDocument = await readJson<UsersDocument>(this.usersFile, { version: FORMAT_VERSION, users: [] })
     const sessionsDocument = await readJson<SessionsDocument>(this.sessionsFile, { version: FORMAT_VERSION, sessions: [] })
@@ -339,9 +399,14 @@ export class FileAuthService extends AuthService {
       version: FORMAT_VERSION,
       identities: [],
     })
+    const desktopDevicesDocument = await readJson<DesktopDevicesDocument>(this.desktopDevicesFile, {
+      version: FORMAT_VERSION,
+      devices: [],
+    })
     if (usersDocument.version !== FORMAT_VERSION
       || sessionsDocument.version !== FORMAT_VERSION
-      || preferencesDocument.version !== FORMAT_VERSION) {
+      || preferencesDocument.version !== FORMAT_VERSION
+      || desktopDevicesDocument.version !== FORMAT_VERSION) {
       throw new Error('auth-file: unsupported on-disk format version')
     }
     assertOidcDocument(oidcDocument)
@@ -354,8 +419,13 @@ export class FileAuthService extends AuthService {
     this.sharedDeepSeekUserIds = new Set(preferencesDocument.sharedDeepSeekUserIds as UserId[])
     this.oidcConfig = oidcDocument.config === undefined ? undefined : structuredClone(oidcDocument.config)
     this.oidcIdentities = oidcDocument.identities
+    assertDesktopDevices(desktopDevicesDocument.devices)
+    this.desktopDevices = desktopDevicesDocument.devices
     if (this.oidcIdentities.some(identity => !this.users.some(user => user.id === identity.userId))) {
       throw new Error('auth-file: OIDC identity references a missing user')
+    }
+    if (this.desktopDevices.some(device => !this.users.some(user => user.id === device.userId))) {
+      throw new Error('auth-file: desktop device references a missing user')
     }
     await this.removeExpiredSessions()
     if (this.users.length === 0 && this.spec.bootstrapAdministrator) await this.bootstrapAdministrator()
@@ -584,6 +654,71 @@ export class FileAuthService extends AuthService {
     })
   }
 
+  override registerDesktopDevice(input: RegisterDesktopDeviceInput): Promise<DesktopDevice> {
+    return this.enqueue(async () => {
+      const user = this.users.find(candidate => candidate.id === input.userId)
+      if (user === undefined) throw new AuthError('USER_NOT_FOUND', '用户不存在')
+      if (user.status !== 'active') throw new AuthError('USER_DISABLED', '此账号已被停用')
+      const label = normalizedDesktopText(input.label, '设备名称')
+      const appVersion = normalizedDesktopText(input.appVersion, '客户端版本')
+      assertDesktopPublicJwk(input.signaturePublicJwk, 'Ed25519')
+      assertDesktopPublicJwk(input.encryptionPublicJwk, 'X25519')
+      const now = new Date().toISOString()
+      const device: DesktopDevice = {
+        id: randomUUID() as DesktopDeviceId,
+        userId: input.userId,
+        label,
+        appVersion,
+        signaturePublicJwk: structuredClone(input.signaturePublicJwk),
+        encryptionPublicJwk: structuredClone(input.encryptionPublicJwk),
+        createdAt: now,
+        lastSeenAt: now,
+      }
+      this.desktopDevices.push(device)
+      await this.persistDesktopDevices()
+      return structuredClone(device)
+    })
+  }
+
+  override getDesktopDevice(deviceId: DesktopDeviceId): DesktopDevice | undefined {
+    const device = this.desktopDevices.find(candidate => candidate.id === deviceId)
+    return device === undefined ? undefined : structuredClone(device)
+  }
+
+  override listDesktopDevices(): readonly DesktopDevice[] {
+    return this.desktopDevices.map(device => structuredClone(device))
+  }
+
+  override touchDesktopDevice(deviceId: DesktopDeviceId, leaseExpiresAt?: string): Promise<DesktopDevice> {
+    return this.enqueue(async () => {
+      const device = this.desktopDevices.find(candidate => candidate.id === deviceId)
+      if (device === undefined) throw new AuthError('INVALID_INPUT', '桌面设备不存在')
+      if (device.revokedAt !== undefined) throw new AuthError('FORBIDDEN', '桌面设备已被撤销')
+      const user = this.users.find(candidate => candidate.id === device.userId)
+      if (user === undefined) throw new AuthError('USER_NOT_FOUND', '用户不存在')
+      if (user.status !== 'active') throw new AuthError('USER_DISABLED', '此账号已被停用')
+      device.lastSeenAt = new Date().toISOString()
+      if (leaseExpiresAt !== undefined) {
+        if (!Number.isFinite(Date.parse(leaseExpiresAt))) throw new AuthError('INVALID_INPUT', '授权到期时间无效')
+        device.leaseExpiresAt = leaseExpiresAt
+      }
+      await this.persistDesktopDevices()
+      return structuredClone(device)
+    })
+  }
+
+  override revokeDesktopDevice(deviceId: DesktopDeviceId): Promise<DesktopDevice> {
+    return this.enqueue(async () => {
+      const device = this.desktopDevices.find(candidate => candidate.id === deviceId)
+      if (device === undefined) throw new AuthError('INVALID_INPUT', '桌面设备不存在')
+      if (device.revokedAt === undefined) {
+        device.revokedAt = new Date().toISOString()
+        await this.persistDesktopDevices()
+      }
+      return structuredClone(device)
+    })
+  }
+
   override ownerForProjectPath(path: string): AuthUser | undefined {
     const owner = this.users.find(user => managedPathContains(this.userPaths(user.id).projects, path))
     return owner === undefined ? undefined : publicUser(owner)
@@ -714,6 +849,14 @@ export class FileAuthService extends AuthService {
       identities: this.oidcIdentities,
     }
     return writeFileAtomic(this.oidcFile, `${JSON.stringify(document, null, 2)}\n`, {
+      mode: 0o600,
+      dirMode: 0o700,
+    })
+  }
+
+  private persistDesktopDevices(): Promise<void> {
+    const document: DesktopDevicesDocument = { version: FORMAT_VERSION, devices: this.desktopDevices }
+    return writeFileAtomic(this.desktopDevicesFile, `${JSON.stringify(document, null, 2)}\n`, {
       mode: 0o600,
       dirMode: 0o700,
     })

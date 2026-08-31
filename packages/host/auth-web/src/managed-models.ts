@@ -1,5 +1,7 @@
 /** Administrator-managed model-site projection shared by HTTP routes and remote policy. */
 
+import { createHash } from 'node:crypto'
+
 import type { Context } from '@deepseek-ai/cordis'
 import {
   isManagedModelCredentialRef,
@@ -8,10 +10,18 @@ import {
 } from '@deepseek-ai/dsh-auth'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import {
+  DESKTOP_ORGANIZATION_CONFIG_VERSION,
+  type DesktopOrganizationConfig,
+  type DesktopOrganizationModelSite,
+} from '@deepseek-ai/dsh-desktop-auth'
+import {
+  DEEPSEEK_SETTINGS_NAMESPACE,
   PROVIDER as DEEPSEEK_PROVIDER,
   PUBLIC_BASE_URL as DEEPSEEK_BASE_URL,
   SHARED_DEEPSEEK_API_KEY_ENV,
-  SHARED_DEEPSEEK_MODEL,
+  deepSeekOfficialModelCatalog,
+  sharedDeepSeekModelIds,
+  type Config as DeepSeekConfig,
 } from '@deepseek-ai/dsh-llm-deepseek'
 import type { Config as PiAiConfig, PiAiProviderProfile } from '@deepseek-ai/dsh-llm-pi-ai'
 import type {} from '@deepseek-ai/dsh-settings'
@@ -39,8 +49,10 @@ export interface ManagedModelSiteStatus {
   name: string
   baseURL: string
   models: readonly ManagedModelRow[]
+  availableModels: readonly ManagedModelRow[]
   configured: boolean
   writable: boolean
+  modelSelectionWritable: boolean
 }
 
 /** User or administrator view of all managed model sites. */
@@ -97,27 +109,41 @@ export function managedCustomProfiles(ctx: Context): ManagedCustomProfile[] {
  */
 export async function managedModelsStatus(ctx: Context, userId?: UserId): Promise<ManagedModelsStatus> {
   const officialCredential = await ctx.credentials.describe(credentialRef(SHARED_DEEPSEEK_API_KEY_ENV))
+  const officialConfig = (ctx.settings.get(DEEPSEEK_SETTINGS_NAMESPACE) as DeepSeekConfig | undefined) ?? {}
+  const officialCatalog = deepSeekOfficialModelCatalog(officialConfig)
+  const officialCatalogById = new Map(officialCatalog.map(model => [model.id, model]))
+  const officialModels = sharedDeepSeekModelIds(officialConfig).map((id) => {
+    const model = officialCatalogById.get(id)
+    /* v8 ignore next -- sharedDeepSeekModelIds rejects ids absent from this same catalog. */
+    if (model === undefined) throw new Error(`official DeepSeek model "${id}" disappeared during projection`)
+    return { id, name: model.name ?? id }
+  })
   const official: ManagedModelSiteStatus = {
     id: DEEPSEEK_PROVIDER,
     kind: 'deepseek-official',
     provider: DEEPSEEK_PROVIDER,
     name: 'DeepSeek',
     baseURL: DEEPSEEK_BASE_URL,
-    models: [{ id: SHARED_DEEPSEEK_MODEL, name: 'DeepSeek-V4-Flash' }],
-    configured: officialCredential.configured,
+    models: officialModels,
+    availableModels: officialCatalog.map(model => ({ id: model.id, name: model.name ?? model.id })),
+    configured: officialCredential.configured && officialModels.length > 0,
     writable: officialCredential.writable,
+    modelSelectionWritable: ctx.settings.writable,
   }
   const custom = await Promise.all(managedCustomProfiles(ctx).map(async (entry): Promise<ManagedModelSiteStatus> => {
     const credential = await ctx.credentials.describe(credentialRef(entry.credential))
+    const models = (entry.profile.models ?? []).map(model => ({ id: model.id, name: model.name ?? model.id }))
     return {
       id: entry.id,
       kind: 'openai-compatible',
       provider: entry.provider,
       name: entry.profile.displayName ?? entry.provider,
       baseURL: entry.profile.baseURL as string,
-      models: (entry.profile.models ?? []).map(model => ({ id: model.id, name: model.name ?? model.id })),
+      models,
+      availableModels: models,
       configured: credential.configured,
       writable: credential.writable && ctx.settings.writable,
+      modelSelectionWritable: ctx.settings.writable,
     }
   }))
   const sites = [official, ...custom]
@@ -140,4 +166,51 @@ export async function configuredManagedProviderModels(ctx: Context): Promise<Map
     if (site.configured) result.set(site.provider, site.models.map(model => model.id))
   }
   return result
+}
+
+/**
+ * Resolve the configured organization-model document encrypted for desktop clients.
+ * The revision covers secret values, so a rotated key invalidates the previous
+ * revision without exposing which field changed.
+ * @param ctx - Host context carrying model settings and credentials.
+ * @returns configured sites with raw keys for immediate encryption.
+ */
+export async function desktopOrganizationConfig(ctx: Context): Promise<DesktopOrganizationConfig> {
+  const status = await managedModelsStatus(ctx)
+  const sites: DesktopOrganizationModelSite[] = []
+  const official = status.sites.find(site => site.kind === 'deepseek-official')
+  const officialCredential = await ctx.credentials.resolve(credentialRef(SHARED_DEEPSEEK_API_KEY_ENV))
+  if (official !== undefined && official.models.length > 0 && officialCredential !== undefined) {
+    sites.push({
+      id: official.id,
+      kind: official.kind,
+      name: official.name,
+      baseURL: official.baseURL,
+      models: official.models,
+      apiKey: officialCredential.value,
+    })
+  }
+  const customById = new Map(managedCustomProfiles(ctx).map(entry => [entry.id, entry]))
+  for (const site of status.sites.filter(candidate => candidate.kind === 'openai-compatible')) {
+    const profile = customById.get(site.id)
+    /* v8 ignore next -- status custom rows derive from this same profile list. */
+    if (profile === undefined || site.models.length === 0) continue
+    const resolved = await ctx.credentials.resolve(credentialRef(profile.credential))
+    if (resolved === undefined) continue
+    sites.push({
+      id: site.id,
+      kind: site.kind,
+      name: site.name,
+      baseURL: site.baseURL,
+      models: site.models,
+      apiKey: resolved.value,
+    })
+  }
+  const revision = createHash('sha256').update(JSON.stringify(sites)).digest('base64url')
+  return {
+    version: DESKTOP_ORGANIZATION_CONFIG_VERSION,
+    revision,
+    issuedAt: new Date().toISOString(),
+    sites,
+  }
 }

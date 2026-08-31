@@ -9,7 +9,7 @@ kind: "package-group"
 
 ## 概述
 
-`credentials/` 组管理你的配置按名引用的机密值：API 密钥只存一次，在 settings 或 `cordis.yml` 中按名引用，轮换时无需编辑任何配置文件。它提供产品中负责存储与查询机密的运行时部分（`credentials/`）、默认的本机凭据文件（`credentials-local/`），以及授权 flow 注册表（`authorization/`）——用于获取无法配置、只能开口去要的凭据。轮换后的密钥会作用于紧随其后的下一次模型请求，而按次运行的环境覆盖（`DEEPSEEK_API_KEY=… dsh`）始终优先于存储值。机密值绝不进入你同步或渲染的配置文件——进去的只有它们的名字，而且本地文件只有同一 OS 用户可读，其他用户读不到。
+`credentials/` 组管理配置按名称引用的机密值。它提供共享能力接口（`credentials/`）、默认本地 YAML 提供方（`credentials-local/`）、Windows 桌面 DPAPI 提供方（`credentials-windows/`）以及需要人工授权的流程注册表（`authorization/`）。轮换后的密钥会在下一次模型请求中生效。普通配置文件只保存引用名称，不保存机密值。
 
 ## 目录
 
@@ -28,6 +28,7 @@ kind: "package-group"
 |---|---|---|
 | [`credentials/`](credentials/README.zh.md) | 在运行时存储、查询与移除机密，而配置只写名字 | `ctx.credentials` |
 | [`credentials-local/`](credentials-local/README.zh.md) | 默认本机存储：一个私有 YAML 文件，环境覆盖优先 | 注册 `ctx.credentials` |
+| [`credentials-windows/`](credentials-windows/README.zh.md) | Windows 桌面存储：一个 CurrentUser DPAPI 加密文档 | 注册 `ctx.credentials` |
 | [`authorization/`](authorization/README.zh.md) | 由插件拥有、通过询问人来取得凭据的 flow | `ctx.authorization` |
 
 -----

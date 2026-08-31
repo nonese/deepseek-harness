@@ -182,6 +182,12 @@
     # request still requires the durable session cookie.
     - id: auth-web
       name: '@deepseek-ai/dsh-host-auth-web'
+      config:
+        # Omit HARNESS_DESKTOP_ISSUER to leave device activation disabled.
+        # The value is the exact public server origin pinned into Windows builds.
+        desktopIssuer: !!js process.env.HARNESS_DESKTOP_ISSUER
+        desktopSigningPrivateJwkRef: HARNESS_DESKTOP_SIGNING_PRIVATE_JWK
+        desktopLeaseDays: 30
 
     - id: api-remotes
       name: '@deepseek-ai/dsh-api-remotes'

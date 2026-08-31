@@ -1,0 +1,78 @@
+name: Windows desktop installer
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'desktop-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    env:
+      DSH_DESKTOP_SERVER_ORIGIN: ${{ vars.DSH_DESKTOP_SERVER_ORIGIN }}
+      DSH_DESKTOP_SERVER_SIGNING_PUBLIC_JWK: ${{ vars.DSH_DESKTOP_SERVER_SIGNING_PUBLIC_JWK }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install reviewed dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build DSH packages and Web assets
+        run: pnpm run build
+
+      - name: Run desktop construction tests
+        run: >-
+          pnpm exec vitest run
+          apps/desktop/tests/runtime.spec.ts
+          packages/boot/app-boot/tests/profile.spec.ts
+          packages/bundle/desktop-app/tests/startup.spec.ts
+          packages/credentials/credentials-windows/tests/credentials-windows.spec.ts
+          packages/identity/desktop-auth/tests/desktop-auth.spec.ts
+          packages/identity/auth-file/tests/auth-file.spec.ts
+          packages/host/auth-web/tests/auth-web.spec.ts
+          --reporter=dot
+
+      - name: Assemble offline Setup.exe
+        shell: pwsh
+        run: ./.github/scripts/build-windows-desktop.ps1
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FZFX-DSH-windows-x64
+          if-no-files-found: error
+          path: |
+            apps/desktop/out/make/squirrel.windows/x64/FZFX-DSH-Setup.exe
+            apps/desktop/out/make/squirrel.windows/x64/FZFX-DSH-Setup.exe.sha256
+            apps/desktop/out/make/squirrel.windows/x64/build-manifest.json
+
+      - name: Publish tagged pilot release
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME `
+            apps/desktop/out/make/squirrel.windows/x64/FZFX-DSH-Setup.exe `
+            apps/desktop/out/make/squirrel.windows/x64/FZFX-DSH-Setup.exe.sha256 `
+            apps/desktop/out/make/squirrel.windows/x64/build-manifest.json `
+            --repo $env:GITHUB_REPOSITORY `
+            --title "奉中附小 DSH $env:GITHUB_REF_NAME" `
+            --notes "Unsigned Windows x64 pilot. Windows SmartScreen may warn. Hardware acceptance is intentionally pending."

@@ -29,6 +29,8 @@ Use it when you assemble the browser application: `apps/web`'s Vite entry runs `
 
 Each managed project row keeps runtime entry separate from its Files action. Files opens a same-origin dialog for directory navigation, bounded text or Markdown preview, and attachment download. The runtime also keeps a collapsible file dock beside the conversation; it follows the current Session Workspace and accepts picker or drag-and-drop upload, including Word, PowerPoint, and Excel files, without leaving the conversation. Dropping a non-image file on the conversation area uploads the complete batch to that Workspace's root and refreshes the dock; an image-only drop remains a conversation attachment. The Host remains authoritative for ownership, hidden-entry, symbolic-link, and path validation.
 
+The administrator system page renders the official DeepSeek adapter catalog as a multi-select list independently from the write-only shared credential field. Ordinary users receive no model-configuration controls; their personal settings choose whether administrator-managed sites apply and may store a private DeepSeek key for official models outside the shared selection.
+
 The shell base styles apply automatic CJK/Latin spacing to ordinary content in supporting browsers. Semantic code and terminal, diff, read, and search output containers retain literal source spacing and column alignment; browsers without `text-autospace` support ignore both declarations.
 
 ### What boot looks like

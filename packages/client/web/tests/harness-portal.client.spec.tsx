@@ -26,6 +26,24 @@ const admin: ClientAuthUser = {
 
 const member: ClientAuthUser = { ...admin, id: 'user-1', username: 'member', displayName: '成员', role: 'user' }
 
+const officialCatalog = [
+  { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash' },
+  { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro' },
+  { id: 'deepseek-v4-flash-vision-exp', name: 'DeepSeek-V4-Flash-Vision-Exp' },
+]
+
+function officialSite(configured: boolean, models = officialCatalog.slice(0, 1)) {
+  return {
+    id: 'deepseek-official', kind: 'deepseek-official', provider: 'deepseek-official',
+    name: 'DeepSeek', baseURL: 'https://api.deepseek.com',
+    models,
+    availableModels: officialCatalog,
+    configured,
+    writable: true,
+    modelSelectionWritable: true,
+  }
+}
+
 function jsonResponse(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } })
 }
@@ -58,6 +76,18 @@ describe('HarnessPortal administrator navigation', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
       if (path === '/auth/projects') return jsonResponse({ projects: [] })
+      if (path === '/auth/system/managed-models/deepseek-official/models') {
+        expect(init?.method).toBe('PUT')
+        expect(JSON.parse(init?.body as string)).toEqual({
+          models: ['deepseek-v4-flash', 'deepseek-v4-pro'],
+        })
+        return jsonResponse({
+          managedModels: {
+            configured: false,
+            sites: [officialSite(false, officialCatalog.slice(0, 2))],
+          },
+        })
+      }
       if (path === '/auth/system/managed-models/deepseek-official') {
         expect(init?.method).toBe('PUT')
         expect(typeof init?.body).toBe('string')
@@ -65,12 +95,7 @@ describe('HarnessPortal administrator navigation', () => {
         return jsonResponse({
           managedModels: {
             configured: true,
-            sites: [{
-              id: 'deepseek-official', kind: 'deepseek-official', provider: 'deepseek-official',
-              name: 'DeepSeek', baseURL: 'https://api.deepseek.com',
-              models: [{ id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash' }],
-              configured: true, writable: true,
-            }],
+            sites: [officialSite(true)],
           },
         })
       }
@@ -100,12 +125,7 @@ describe('HarnessPortal administrator navigation', () => {
           managedModels: {
             configured: true,
             sites: [
-              {
-                id: 'deepseek-official', kind: 'deepseek-official', provider: 'deepseek-official',
-                name: 'DeepSeek', baseURL: 'https://api.deepseek.com',
-                models: [{ id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash' }],
-                configured: true, writable: true,
-              },
+              officialSite(true),
               {
                 id: 'a1b2c3d4e5f6', kind: 'openai-compatible', provider: 'managed-a1b2c3d4e5f6',
                 name: '校内 New API', baseURL: 'https://new-api.example.test/v1',
@@ -165,12 +185,7 @@ describe('HarnessPortal administrator navigation', () => {
           },
           managedModels: {
             configured: false,
-            sites: [{
-              id: 'deepseek-official', kind: 'deepseek-official', provider: 'deepseek-official',
-              name: 'DeepSeek', baseURL: 'https://api.deepseek.com',
-              models: [{ id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash' }],
-              configured: false, writable: true,
-            }],
+            sites: [officialSite(false)],
             enabledUsers: 0,
           },
           limits: { maxBodyBytes: 64 * 1024 },
@@ -196,6 +211,10 @@ describe('HarnessPortal administrator navigation', () => {
     expect(getByText('自定义站点').parentElement?.querySelector('strong')?.textContent).toBe('0')
     expect(renderRuntime).not.toHaveBeenCalled()
     expect(fetchMock).toHaveBeenCalledWith('/auth/system', expect.anything())
+
+    fireEvent.click(getByRole('checkbox', { name: /DeepSeek-V4-Pro/ }))
+    fireEvent.click(getByRole('button', { name: '保存官方模型' }))
+    await waitFor(() => { expect(getByText('DeepSeek 官方站点的统一模型列表已保存。')).toBeTruthy() })
 
     fireEvent.change(getByPlaceholderText('输入 DeepSeek API Key'), { target: { value: 'sk-browser-test-secret' } })
     fireEvent.click(getByRole('button', { name: '保存 Key' }))
@@ -620,12 +639,7 @@ describe('HarnessPortal administrator navigation', () => {
         return jsonResponse({
           managedModels: {
             configured: true, enabled: true,
-            sites: [{
-              id: 'deepseek-official', kind: 'deepseek-official', provider: 'deepseek-official',
-              name: 'DeepSeek', baseURL: 'https://api.deepseek.com',
-              models: [{ id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash' }],
-              configured: true, writable: true,
-            }],
+            sites: [officialSite(true)],
           },
         })
       }
@@ -633,12 +647,7 @@ describe('HarnessPortal administrator navigation', () => {
         return jsonResponse({
           managedModels: {
             configured: true, enabled: false,
-            sites: [{
-              id: 'deepseek-official', kind: 'deepseek-official', provider: 'deepseek-official',
-              name: 'DeepSeek', baseURL: 'https://api.deepseek.com',
-              models: [{ id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash' }],
-              configured: true, writable: true,
-            }],
+            sites: [officialSite(true)],
           },
         })
       }

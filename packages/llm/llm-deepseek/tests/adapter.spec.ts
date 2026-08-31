@@ -1923,6 +1923,30 @@ describe('plugin registration and config', () => {
     await expect(ctx.llm.listModels('deepseek-official')).resolves.toEqual([])
   })
 
+  it('resolves the administrator-selected official model set against the current catalog', () => {
+    expect(resolveAdapterOptions({}).sharedModels).toEqual(['deepseek-v4-flash'])
+    expect(resolveAdapterOptions({ sharedModels: [] }).sharedModels).toEqual(['deepseek-v4-flash'])
+    expect(resolveAdapterOptions({
+      sharedModels: ['deepseek-v4-pro', 'deepseek-v4-flash'],
+    }).sharedModels).toEqual(['deepseek-v4-pro', 'deepseek-v4-flash'])
+    expect(resolveAdapterOptions({ models: [{ id: 'private-model' }] }).sharedModels).toEqual([])
+  })
+
+  it.each([
+    [['deepseek-v4-pro', 'deepseek-v4-pro'], /duplicate model/],
+    [['unknown-model'], /absent from the official catalog/],
+  ] as const)('rejects invalid shared official model selection %j', (sharedModels, message) => {
+    expect(() => resolveAdapterOptions({ sharedModels: [...sharedModels] })).toThrow(message)
+  })
+
+  it('rejects more than 32 shared official models through direct construction', () => {
+    const models = Array.from({ length: 33 }, (_value, index) => ({ id: `model-${String(index)}` }))
+    expect(() => resolveAdapterOptions({
+      models,
+      sharedModels: models.map(model => model.id),
+    })).toThrow(/cannot contain more than 32/)
+  })
+
   const invalidModels: Array<[LlmDeepSeek.DeepSeekCatalogModel[], RegExp]> = [
     [[{ id: '' }], /ids must be non-empty/],
     [[{ id: 'm', name: '' }], /empty name/],

@@ -51,6 +51,9 @@ export function managedPathContains(root: string, candidate: string): boolean {
 /** Stable, path-safe identity. Usernames and display names never select storage paths. */
 export type UserId = Branded<'UserId'>
 
+/** Stable identity of one desktop installation authorized by the server. */
+export type DesktopDeviceId = Branded<'DesktopDeviceId'>
+
 /** Roles supported by the server authorization model. */
 export type UserRole = 'admin' | 'user'
 
@@ -112,6 +115,40 @@ export interface UpdateUserInput {
   status?: UserStatus
 }
 
+/** Public asymmetric key admitted for one desktop device. */
+export interface DesktopDevicePublicJwk {
+  kty: string
+  crv: string
+  x: string
+  alg?: string
+  use?: string
+  key_ops?: readonly string[]
+  ext?: boolean
+}
+
+/** Durable server record for one authorized desktop installation. */
+export interface DesktopDevice {
+  id: DesktopDeviceId
+  userId: UserId
+  label: string
+  appVersion: string
+  signaturePublicJwk: DesktopDevicePublicJwk
+  encryptionPublicJwk: DesktopDevicePublicJwk
+  createdAt: string
+  lastSeenAt: string
+  leaseExpiresAt?: string
+  revokedAt?: string
+}
+
+/** Values accepted after OIDC authenticates a pending desktop activation. */
+export interface RegisterDesktopDeviceInput {
+  userId: UserId
+  label: string
+  appVersion: string
+  signaturePublicJwk: DesktopDevicePublicJwk
+  encryptionPublicJwk: DesktopDevicePublicJwk
+}
+
 /** User-owned choice to consume administrator-managed model credentials. */
 export interface SharedDeepSeekPreference {
   enabled: boolean
@@ -119,9 +156,6 @@ export interface SharedDeepSeekPreference {
 
 /** Administrator-managed DeepSeek credential reference shared only with opted-in sessions. */
 export const SHARED_DEEPSEEK_API_KEY_ENV = 'HARNESS_SHARED_DEEPSEEK_API_KEY'
-
-/** Exact official DeepSeek model eligible for the administrator-managed credential. */
-export const SHARED_DEEPSEEK_MODEL = 'deepseek-v4-flash'
 
 /** Credential-reference prefix reserved for administrator-managed custom model sites. */
 export const MANAGED_MODEL_CREDENTIAL_PREFIX = 'HARNESS_SHARED_MODEL_'
@@ -310,6 +344,41 @@ export abstract class AuthService extends Service {
    * @param enabled - whether matching model requests may use managed credentials.
    */
   abstract setSharedDeepSeekPreference(userId: UserId, enabled: boolean): Promise<void>
+
+  /**
+   * Register one desktop installation after its OIDC activation succeeds.
+   * @param input - authenticated owner, display label, version, and public keys.
+   * @returns the durable device record.
+   */
+  abstract registerDesktopDevice(input: RegisterDesktopDeviceInput): Promise<DesktopDevice>
+
+  /**
+   * Read one desktop installation.
+   * @param deviceId - stable device identity.
+   * @returns the detached record, or `undefined` when absent.
+   */
+  abstract getDesktopDevice(deviceId: DesktopDeviceId): DesktopDevice | undefined
+
+  /**
+   * List desktop installations in creation order.
+   * @returns detached records for administration.
+   */
+  abstract listDesktopDevices(): readonly DesktopDevice[]
+
+  /**
+   * Record one successful lease or configuration operation.
+   * @param deviceId - device that proved possession of its signing key.
+   * @param leaseExpiresAt - renewed lease expiration, when the operation issued one.
+   * @returns the updated detached record.
+   */
+  abstract touchDesktopDevice(deviceId: DesktopDeviceId, leaseExpiresAt?: string): Promise<DesktopDevice>
+
+  /**
+   * Revoke one desktop installation. Repeating the operation is a no-op.
+   * @param deviceId - device to revoke.
+   * @returns the detached revoked record.
+   */
+  abstract revokeDesktopDevice(deviceId: DesktopDeviceId): Promise<DesktopDevice>
 
   /**
    * Resolve which user owns a path inside a program-managed project tree.

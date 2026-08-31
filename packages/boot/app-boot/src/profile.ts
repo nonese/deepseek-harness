@@ -143,6 +143,15 @@ export const PROFILE_TEMPLATES: Record<string, ProfileTemplate> = {
     bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'],
     patchReload: 'live',
   },
+  desktop: {
+    bundles: [
+      '@deepseek-ai/dsh-base',
+      '@deepseek-ai/dsh-web-app',
+      '@deepseek-ai/dsh-desktop-app',
+      'dsh-browser-playwright',
+    ],
+    patchReload: 'startup',
+  },
   headless: {
     bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-headless'],
     patchReload: 'startup',
@@ -499,6 +508,7 @@ function resolveModuleFallbackEntries(
 ): { entries: ModuleFallbackEntry[]; packageNames: ReadonlySet<string> } {
   const appManifest = readModuleFallbackManifest(installAnchor)
   const links = new Map<string, string>()
+  const packagedExecutable = isPackagedExecutable()
   /* v8 ignore next -- a real app manifest always declares its name */
   if (appManifest.name !== undefined) links.set(appManifest.name, dirname(installAnchor))
   // BFS over the resolvable dependency graph; the visited set is the link
@@ -511,16 +521,22 @@ function resolveModuleFallbackEntries(
     /* v8 ignore next -- a real app manifest always declares dependencies */
     for (const dep of profileDependencyNames(next.manifest)) {
       if (links.has(dep)) continue
-      const dir = packageDirFromAnchor(next.anchor, dep)
+      const resolvedDir = packageDirFromAnchor(next.anchor, dep)
       // A declared-but-uninstalled dependency cannot be a loader-visible
       // plugin; skip it rather than fail the whole boot.
-      if (dir === undefined) continue
-      links.set(dep, dir)
-      const manifestPath = join(dir, 'package.json')
+      if (resolvedDir === undefined) continue
+      // Pnpm exposes direct dependencies through symlinks into its content
+      // store. Continue traversal from the physical package directory so its
+      // isolated sibling dependencies remain resolvable.
+      const physicalDir = realpathSync.native(resolvedDir)
+      // Packaged proxies retain installation-contained targets, while plain
+      // Node links point directly at the physical generation.
+      links.set(dep, packagedExecutable ? resolvedDir : physicalDir)
+      const manifestPath = join(physicalDir, 'package.json')
       queue.push({ anchor: manifestPath, manifest: readModuleFallbackManifest(manifestPath) })
     }
   }
-  const entries = !isPackagedExecutable()
+  const entries = !packagedExecutable
     ? [...links].map(([packageName, packageDir]) => ({ kind: 'symlink' as const, packageName, packageDir }))
     : [...links].flatMap(([packageName, packageDir]) => {
       const source = packageProxySource(packageName, packageDir)
@@ -626,9 +642,10 @@ function dependencyClosure(
       /* v8 ignore next -- an installable package manifest always declares dependencies or peers */
       for (const dep of profileDependencyNames(next.manifest)) {
         if (visited.has(dep)) continue
-        const dir = packageDirFromAnchor(next.anchor, dep, exclude)
+        const resolvedDir = packageDirFromAnchor(next.anchor, dep, exclude)
         // A declared-but-uninstalled dependency cannot be loader-visible.
-        if (dir === undefined) continue
+        if (resolvedDir === undefined) continue
+        const dir = realpathSync.native(resolvedDir)
         visited.add(dep)
         links.set(dep, dir)
         const manifestPath = join(dir, 'package.json')

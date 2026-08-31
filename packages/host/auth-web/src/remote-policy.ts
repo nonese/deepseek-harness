@@ -14,6 +14,8 @@ import type {
 } from '@deepseek-ai/dsh-api-session-controller/types'
 import { ApiSessionNotFound } from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
+import { credentialRef } from '@deepseek-ai/dsh-credentials'
+import { PROVIDER as DEEPSEEK_PROVIDER } from '@deepseek-ai/dsh-llm-deepseek'
 import type { WorkspaceFollowFrame, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/types'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
@@ -76,6 +78,8 @@ const WORKSPACE_ID_FIELDS = new Set([
   'beforeWorkspaceId',
   'workspaceId',
 ])
+
+const PERSONAL_DEEPSEEK_API_KEY_REF = credentialRef('DEEPSEEK_API_KEY')
 
 interface RemoteEventReady {
   readonly type: 'ready'
@@ -293,16 +297,32 @@ async function projectUnary(
     const hidden = new Set(managedCustomProfiles(ctx)
       .map(entry => entry.provider)
       .filter(provider => !configured.has(provider)))
-    if (hidden.size === 0) return value
-    const groups = catalog.groups.filter(group => !hidden.has(group.id))
+    const personalDeepSeek = await ctx.get('userCredentials')
+      ?.forOwner(String(principal.user.id))
+      .describe(PERSONAL_DEEPSEEK_API_KEY_REF)
+    const sharedOfficialModels = configured.get(DEEPSEEK_PROVIDER)
+    const restrictOfficial = sharedOfficialModels !== undefined && personalDeepSeek?.configured !== true
+    const hasOfficial = catalog.groups.some(group => group.id === DEEPSEEK_PROVIDER)
+    if (hidden.size === 0 && (!restrictOfficial || !hasOfficial)) return value
+    const officialAllowed = new Set(sharedOfficialModels ?? [])
+    const groups = catalog.groups
+      .filter(group => !hidden.has(group.id))
+      .map(group => restrictOfficial && group.id === DEEPSEEK_PROVIDER
+        ? { ...group, models: group.models.filter(model => officialAllowed.has(model.id)) }
+        : group)
+      .filter(group => group.models.length > 0)
     const firstGroup = groups[0]
     const first = firstGroup?.models[0]
+    const defaultVisible = groups.some(group => group.id === catalog.default.provider
+      && group.models.some(model => model.id === catalog.default.model))
+    const visibleProviders = new Set(groups.map(group => group.id))
     return {
       ...catalog,
-      default: hidden.has(catalog.default.provider) && firstGroup !== undefined && first !== undefined
+      default: !defaultVisible && firstGroup !== undefined && first !== undefined
         ? { provider: firstGroup.id, model: first.id }
         : catalog.default,
-      routableProviders: catalog.routableProviders.filter(provider => !hidden.has(provider)),
+      routableProviders: catalog.routableProviders.filter(provider => !hidden.has(provider)
+        && (provider !== DEEPSEEK_PROVIDER || visibleProviders.has(provider))),
       groups,
       failures: catalog.failures.filter(failure => !hidden.has(failure.id)),
     }

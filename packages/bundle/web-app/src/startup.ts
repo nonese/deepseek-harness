@@ -43,9 +43,9 @@ interface WebOptions {
  * This app's command: its flags, its description, and its help text.
  * @returns a fresh program, so one process can parse more than once (tests).
  */
-function webCommand(): Command {
+function webCommand(profileName: string): Command {
   return new Command()
-    .name('dsh --profile web')
+    .name(`dsh --profile ${profileName}`)
     .description('Serve the Harness browser UI.')
     .helpOption('-h, --help', 'show this help')
     .option('--host <host>', 'bind host')
@@ -54,10 +54,10 @@ function webCommand(): Command {
     .option('--trusted-host <authority...>', 'extra authority the /api browser-trust fence accepts (host or host:port; repeatable)')
     .addHelpText('after', `
 Examples:
-  dsh --profile web                          serve on the composed host and port
-  dsh --profile web --no-open                serve without opening a browser
-  dsh --profile web --port 8080              serve on another port
-  dsh --profile web --host 0.0.0.0           serve authenticated users on the LAN
+  dsh --profile ${profileName}                          serve on the composed host and port
+  dsh --profile ${profileName} --no-open                serve without opening a browser
+  dsh --profile ${profileName} --port 8080              serve on another port
+  dsh --profile ${profileName} --host 0.0.0.0           serve authenticated users on the LAN
 `)
 }
 
@@ -68,9 +68,10 @@ Examples:
  * address. A non-numeric `--port` is a usage error, so on rejection (and on
  * `--help`) nothing is provided.
  * @param ctx - plugin context carrying the command line.
+ * @param profileName - application profile named in help text and examples.
  */
-export function apply(ctx: Context): void {
-  const program = webCommand()
+export function applyWebStartup(ctx: Context, profileName = 'web'): void {
+  const program = webCommand(profileName)
   program.action(() => {
     const options = program.opts<WebOptions>()
     if (options.port !== undefined && !/^\d+$/.test(options.port)) {
@@ -84,4 +85,12 @@ export function apply(ctx: Context): void {
     } satisfies WebStartupValues)
   })
   parseCmdline(ctx, program)
+}
+
+/**
+ * Mount the server Web profile's authentication-ordered command provider.
+ * @param ctx - plugin context carrying command-line arguments and authentication.
+ */
+export function apply(ctx: Context): void {
+  applyWebStartup(ctx)
 }

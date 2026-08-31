@@ -80,6 +80,7 @@
   config:
     - id: image-generation-dreamina
       name: '@deepseek-ai/dsh-image-generation-dreamina'
+      disabled: !!js process.env.DSH_DISABLE_DREAMINA === '1'
       config:
         cliPath: !!js process.env.DREAMINA_CLI_PATH
         modelVersion: '4.0'

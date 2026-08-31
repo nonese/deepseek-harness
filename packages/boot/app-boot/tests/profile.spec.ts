@@ -330,6 +330,34 @@ describe('healProfilesModuleFallback', () => {
     expect(before).toContain('dep-of-a')
   })
 
+  it('traverses dependencies beside a symlinked installation package real path', async () => {
+    const root = tmp()
+    const appDir = join(root, 'app')
+    const modulesDir = join(appDir, 'node_modules')
+    const storeModules = join(modulesDir, '.pnpm', 'bundle-a@0.0.0', 'node_modules')
+    const realBundle = join(storeModules, 'bundle-a')
+    const realDependency = join(storeModules, 'transitive-only')
+    mkdirSync(realBundle, { recursive: true })
+    mkdirSync(realDependency)
+    writeFileSync(join(appDir, 'package.json'), JSON.stringify({
+      name: 'dsh-app',
+      dependencies: { 'bundle-a': '0.0.0' },
+    }))
+    writeFileSync(join(realBundle, 'package.json'), JSON.stringify({
+      name: 'bundle-a',
+      dependencies: { 'transitive-only': '0.0.0' },
+    }))
+    writeFileSync(join(realDependency, 'package.json'), JSON.stringify({ name: 'transitive-only' }))
+    symlinkSync(realBundle, join(modulesDir, 'bundle-a'), 'junction')
+    const home = tmp()
+
+    await healProfilesModuleFallback({ installAnchor: join(appDir, 'package.json'), home })
+
+    const fallback = join(home, 'profiles', 'node_modules')
+    expect(readlinkSync(join(fallback, 'bundle-a'))).toBe(realpathSync.native(realBundle))
+    expect(readlinkSync(join(fallback, 'transitive-only'))).toBe(realpathSync.native(realDependency))
+  })
+
   it('throws when a fallback entry is a foreign file or directory', async () => {
     const anchor = stageInstallation({})
     for (const kind of ['file', 'directory']) {

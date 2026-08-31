@@ -17,16 +17,28 @@ import {
   managedPathContains,
   type AuthPrincipal,
   type AuthUser,
+  type DesktopDeviceId,
+  type DesktopDevicePublicJwk,
   type OidcClientAuthMethod,
   type OidcClientConfig,
   type UserId,
 } from '@deepseek-ai/dsh-auth'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
+import {
+  desktopJwkThumbprint,
+  type DesktopActivationInput,
+  type DesktopPublicJwk,
+} from '@deepseek-ai/dsh-desktop-auth'
 import type {
   ConnectionTrustRequest,
 } from '@deepseek-ai/dsh-client-connection'
 import { normalizeApiKey } from '@deepseek-ai/dsh-llm'
-import { SHARED_DEEPSEEK_API_KEY_ENV } from '@deepseek-ai/dsh-llm-deepseek'
+import {
+  DEEPSEEK_SETTINGS_NAMESPACE,
+  SHARED_DEEPSEEK_API_KEY_ENV,
+  deepSeekOfficialModelCatalog,
+  type Config as DeepSeekConfig,
+} from '@deepseek-ai/dsh-llm-deepseek'
 import type { PiAiProviderProfile } from '@deepseek-ai/dsh-llm-pi-ai'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { IndexInjection } from '@deepseek-ai/dsh-host-webserver'
@@ -46,6 +58,10 @@ import {
 } from './managed-models.ts'
 import { userScopedRemotePolicy } from './remote-policy.ts'
 import { createUserCredentialStore } from './user-credentials.ts'
+import {
+  DESKTOP_SIGNING_PRIVATE_JWK_ENV,
+  DesktopAuthRuntime,
+} from './desktop-runtime.ts'
 
 /** Stable Cordis plugin name. */
 export const name = 'host-auth-web'
@@ -81,6 +97,12 @@ export interface Config {
   oidcTokenEndpointCreatedCompatibility?: boolean
   /** Maximum uploaded project file size. Defaults to 50 MiB. */
   projectFileUploadMaxBytes?: number
+  /** Fixed public origin accepted by desktop leases. Omit to disable desktop activation. */
+  desktopIssuer?: string
+  /** Credential reference containing the server Ed25519 private JWK. */
+  desktopSigningPrivateJwkRef?: string
+  /** Offline desktop lease duration in days. Defaults to 30. */
+  desktopLeaseDays?: number
 }
 
 const DEFAULT_COOKIE_NAME = 'harness_session'
@@ -104,6 +126,9 @@ export const Config: z<Config> = z.object({
   oidcTokenEndpointCreatedCompatibility: z.boolean().default(false),
   projectFileUploadMaxBytes: z.natural().min(1024).max(1024 * 1024 * 1024)
     .default(DEFAULT_PROJECT_FILE_UPLOAD_MAX_BYTES),
+  desktopIssuer: z.string(),
+  desktopSigningPrivateJwkRef: z.string().default(DESKTOP_SIGNING_PRIVATE_JWK_ENV),
+  desktopLeaseDays: z.number().min(1).max(30).default(30),
 })
 
 interface JsonObject {
@@ -117,6 +142,16 @@ interface PendingOidcFlow {
   settings: OidcClientConfig
   fingerprint: string
   client: oidc.Configuration
+  desktop?: PendingDesktopActivation
+}
+
+interface PendingDesktopActivation {
+  flowId: string
+  challenge: string
+  label: string
+  appVersion: string
+  signaturePublicJwk: DesktopDevicePublicJwk
+  encryptionPublicJwk: DesktopDevicePublicJwk
 }
 
 function sendJson(res: ServerResponse, status: number, value: unknown, headers?: Record<string, string>): void {
@@ -271,6 +306,59 @@ function stringArrayField(body: JsonObject, key: string): string[] {
   return value as string[]
 }
 
+function desktopPublicJwkField(
+  body: JsonObject,
+  key: string,
+  curve: 'Ed25519' | 'X25519',
+): DesktopDevicePublicJwk {
+  const value = body[key]
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new AuthError('INVALID_INPUT', `${key} 必须是 JWK 对象`)
+  }
+  const fields = value as Record<string, unknown>
+  if (fields['kty'] !== 'OKP' || fields['crv'] !== curve
+    || typeof fields['x'] !== 'string' || fields['x'].length === 0 || fields['d'] !== undefined) {
+    throw new AuthError('INVALID_INPUT', `${key} 必须是不含私钥的 ${curve} 公钥`)
+  }
+  return {
+    kty: 'OKP',
+    crv: curve,
+    x: fields['x'],
+    ...typeof fields['alg'] === 'string' ? { alg: fields['alg'] } : {},
+    ...typeof fields['use'] === 'string' ? { use: fields['use'] } : {},
+    ...Array.isArray(fields['key_ops']) && fields['key_ops'].every(item => typeof item === 'string')
+      ? { key_ops: fields['key_ops'] }
+      : {},
+    ...typeof fields['ext'] === 'boolean' ? { ext: fields['ext'] } : {},
+  }
+}
+
+function normalizedDesktopIssuer(value: string | undefined): string | undefined {
+  if (value === undefined || value.trim().length === 0) return undefined
+  let parsed: URL
+  try {
+    parsed = new URL(value.trim())
+  } catch {
+    throw new Error('host-auth-web: desktopIssuer must be a complete HTTP or HTTPS origin')
+  }
+  if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || parsed.username.length > 0
+    || parsed.password.length > 0 || parsed.pathname !== '/' || parsed.search.length > 0 || parsed.hash.length > 0) {
+    throw new Error('host-auth-web: desktopIssuer must be an HTTP or HTTPS origin without credentials or a path')
+  }
+  return parsed.origin
+}
+
+function sendDesktopResult(res: ServerResponse, title: string, message: string, success: boolean): void {
+  const color = success ? '#16794b' : '#b42318'
+  const body = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${title}</title><body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#f3f7ff;font-family:system-ui,sans-serif;color:#101828"><main style="width:min(520px,calc(100vw - 48px));background:#fff;border:1px solid #d8e2f0;border-radius:24px;padding:40px;box-shadow:0 24px 70px rgba(16,24,40,.12)"><div style="font-size:14px;color:${color};font-weight:700">奉中附小 DSH</div><h1 style="font-size:30px;margin:12px 0">${title}</h1><p style="line-height:1.7;color:#475467">${message}</p><p style="font-size:13px;color:#667085;margin-top:28px">可以关闭此窗口并返回桌面客户端。</p></main></body></html>`
+  res.writeHead(success ? 200 : 400, {
+    'cache-control': 'no-store',
+    'content-type': 'text/html; charset=utf-8',
+    'content-length': Buffer.byteLength(body),
+  })
+  res.end(body)
+}
+
 function normalizeOidcUrl(value: string, field: string, allowInsecure: boolean): URL {
   let parsed: URL
   try {
@@ -407,7 +495,7 @@ async function discoverOidcClient(
     token_endpoint_auth_method: inputs.settings.clientAuthMethod,
     ...inputs.secret === undefined ? {} : { client_secret: inputs.secret },
   }
-  // oxlint-disable-next-line typescript/no-deprecated -- explicitly enabled only for administrator-approved intranet HTTP issuers
+  // oxlint-disable-next-line typescript/no-deprecated -- administrator-approved intranet issuers may intentionally use HTTP
   const allowInsecureRequests = oidc.allowInsecureRequests
   const client = await oidc.discovery(
     new URL(inputs.settings.issuer),
@@ -497,6 +585,17 @@ function managedSiteModels(values: string[]): string[] {
     if (!validManagedSiteModelId(model)) {
       throw new AuthError('INVALID_INPUT', '模型 ID 规范化后必须为 1–128 个不含控制字符的字符')
     }
+  }
+  return models
+}
+
+function managedOfficialModels(ctx: Context, values: string[]): string[] {
+  const models = managedSiteModels(values)
+  const config = (ctx.settings.get(DEEPSEEK_SETTINGS_NAMESPACE) as DeepSeekConfig | undefined) ?? {}
+  const available = new Set(deepSeekOfficialModelCatalog(config).map(model => model.id))
+  const unknown = models.find(model => !available.has(model))
+  if (unknown !== undefined) {
+    throw new AuthError('INVALID_INPUT', `DeepSeek 官方模型目录中不存在 ${unknown}`)
   }
   return models
 }
@@ -801,6 +900,15 @@ export function apply(ctx: Context, config: Config = {}): void {
   const tokenEndpointCreatedCompatibility = config.oidcTokenEndpointCreatedCompatibility ?? false
   const projectFileUploadMaxBytes = config.projectFileUploadMaxBytes ?? DEFAULT_PROJECT_FILE_UPLOAD_MAX_BYTES
   const pendingOidcFlows = new Map<string, PendingOidcFlow>()
+  const desktopIssuer = normalizedDesktopIssuer(config.desktopIssuer)
+  const desktopRuntime = desktopIssuer === undefined
+    ? undefined
+    : new DesktopAuthRuntime(ctx, {
+      issuer: desktopIssuer,
+      signingPrivateJwkRef: config.desktopSigningPrivateJwkRef ?? DESKTOP_SIGNING_PRIVATE_JWK_ENV,
+      leaseTtlMs: (config.desktopLeaseDays ?? 30) * 24 * 60 * 60 * 1000,
+      completionTtlMs: OIDC_FLOW_TTL_MS,
+    })
 
   ctx.provide('userCredentials', createUserCredentialStore(ctx))
 
@@ -832,6 +940,42 @@ export function apply(ctx: Context, config: Config = {}): void {
     const target = settings === undefined ? new URL('http://harness.invalid/') : new URL('/', settings.redirectUri)
     target.searchParams.set('oidc_error', code)
     return settings === undefined ? `${target.pathname}${target.search}` : target.href
+  }
+
+  const createOidcFlow = async (desktop?: PendingDesktopActivation): Promise<{
+    authorizationUrl: URL
+    state: string
+  }> => {
+    pruneOidcFlows()
+    if (pendingOidcFlows.size >= MAX_PENDING_OIDC_FLOWS) {
+      throw new AuthError('INVALID_INPUT', 'OIDC 登录请求过多，请稍后重试')
+    }
+    const runtime = await discoverOidcClient(ctx, true, tokenEndpointCreatedCompatibility)
+    const state = oidc.randomState()
+    const nonce = oidc.randomNonce()
+    const codeVerifier = oidc.randomPKCECodeVerifier()
+    const codeChallenge = await oidc.calculatePKCECodeChallenge(codeVerifier)
+    pendingOidcFlows.set(state, {
+      expiresAt: Date.now() + OIDC_FLOW_TTL_MS,
+      codeVerifier,
+      nonce,
+      settings: runtime.settings,
+      fingerprint: runtime.fingerprint,
+      client: runtime.client,
+      ...desktop === undefined ? {} : { desktop },
+    })
+    return {
+      state,
+      authorizationUrl: oidc.buildAuthorizationUrl(runtime.client, {
+        redirect_uri: runtime.settings.redirectUri,
+        scope: runtime.settings.scopes.join(' '),
+        response_type: 'code',
+        state,
+        nonce,
+        code_challenge: codeChallenge,
+        code_challenge_method: 'S256',
+      }),
+    }
   }
 
   ctx.tools.guard(exec => dynamicCordisGuard(ctx, exec))
@@ -887,28 +1031,7 @@ export function apply(ctx: Context, config: Config = {}): void {
               sendRedirect(res, oidcFailureLocation(settings, 'busy'))
               return
             }
-            const runtime = await discoverOidcClient(ctx, true, tokenEndpointCreatedCompatibility)
-            const state = oidc.randomState()
-            const nonce = oidc.randomNonce()
-            const codeVerifier = oidc.randomPKCECodeVerifier()
-            const codeChallenge = await oidc.calculatePKCECodeChallenge(codeVerifier)
-            pendingOidcFlows.set(state, {
-              expiresAt: Date.now() + OIDC_FLOW_TTL_MS,
-              codeVerifier,
-              nonce,
-              settings: runtime.settings,
-              fingerprint: runtime.fingerprint,
-              client: runtime.client,
-            })
-            const authorizationUrl = oidc.buildAuthorizationUrl(runtime.client, {
-              redirect_uri: runtime.settings.redirectUri,
-              scope: runtime.settings.scopes.join(' '),
-              response_type: 'code',
-              state,
-              nonce,
-              code_challenge: codeChallenge,
-              code_challenge_method: 'S256',
-            })
+            const { authorizationUrl, state } = await createOidcFlow()
             sendRedirect(res, authorizationUrl.href, [oidcFlowCookie(oidcCookieName, state, secure)])
           } catch (error) {
             ctx.logger.warn('OIDC authorization start failed')
@@ -925,20 +1048,33 @@ export function apply(ctx: Context, config: Config = {}): void {
           const cookieState = cookieValue(req, oidcCookieName)
           const flow = state === null ? undefined : pendingOidcFlows.get(state)
           const clearFlowCookie = expiredCookie(oidcCookieName, secure, '/auth/oidc')
-          if (state === null || cookieState !== state || flow === undefined || flow.expiresAt <= Date.now()) {
+          if (state === null || flow === undefined || flow.expiresAt <= Date.now()
+            || (flow.desktop === undefined && cookieState !== state)) {
             if (flow !== undefined && flow.expiresAt <= Date.now()) pendingOidcFlows.delete(state as string)
-            sendRedirect(res, oidcFailureLocation(flow?.settings, 'flow_expired'), [clearFlowCookie])
+            if (flow?.desktop !== undefined) {
+              sendDesktopResult(res, '登录请求已失效', '请返回桌面客户端重新发起登录。', false)
+            } else {
+              sendRedirect(res, oidcFailureLocation(flow?.settings, 'flow_expired'), [clearFlowCookie])
+            }
             return
           }
           pendingOidcFlows.delete(state)
           if (requestUrl.searchParams.has('error')) {
-            sendRedirect(res, oidcFailureLocation(flow.settings, 'access_denied'), [clearFlowCookie])
+            if (flow.desktop !== undefined) {
+              sendDesktopResult(res, '登录未完成', '身份门户拒绝了本次授权。', false)
+            } else {
+              sendRedirect(res, oidcFailureLocation(flow.settings, 'access_denied'), [clearFlowCookie])
+            }
             return
           }
           try {
             const current = await resolveOidcInputs(ctx, true)
             if (current.fingerprint !== flow.fingerprint) {
-              sendRedirect(res, oidcFailureLocation(flow.settings, 'configuration_changed'), [clearFlowCookie])
+              if (flow.desktop !== undefined) {
+                sendDesktopResult(res, '服务器配置已变化', '请返回桌面客户端重新发起登录。', false)
+              } else {
+                sendRedirect(res, oidcFailureLocation(flow.settings, 'configuration_changed'), [clearFlowCookie])
+              }
               return
             }
             const callbackUrl = new URL(flow.settings.redirectUri)
@@ -967,15 +1103,105 @@ export function apply(ctx: Context, config: Config = {}): void {
               administrator: flow.settings.administratorGroup.length > 0
                 && groups.includes(flow.settings.administratorGroup),
             })
-            sendRedirect(res, new URL('/', flow.settings.redirectUri).href, [
-              sessionCookie(cookieName, issued.token, issued.principal.expiresAt, secure),
-              clearFlowCookie,
-            ])
+            if (flow.desktop !== undefined) {
+              if (desktopRuntime === undefined) throw new Error('desktop activation was disabled during OIDC callback')
+              await ctx.auth.logout(issued.token)
+              const device = await ctx.auth.registerDesktopDevice({
+                userId: issued.principal.user.id,
+                label: flow.desktop.label,
+                appVersion: flow.desktop.appVersion,
+                signaturePublicJwk: flow.desktop.signaturePublicJwk,
+                encryptionPublicJwk: flow.desktop.encryptionPublicJwk,
+              })
+              desktopRuntime.completeOidc(
+                flow.desktop.flowId,
+                flow.desktop.challenge,
+                device.id,
+                flow.expiresAt,
+              )
+              sendDesktopResult(res, '登录成功', '这台设备已通过账号验证，桌面客户端正在完成授权。', true)
+            } else {
+              sendRedirect(res, new URL('/', flow.settings.redirectUri).href, [
+                sessionCookie(cookieName, issued.token, issued.principal.expiresAt, secure),
+                clearFlowCookie,
+              ])
+            }
           } catch (error) {
             ctx.logger.warn('OIDC callback validation failed')
             ctx.logger.warn(error)
-            sendRedirect(res, oidcFailureLocation(flow.settings, 'login_failed'), [clearFlowCookie])
+            if (flow.desktop !== undefined) {
+              sendDesktopResult(res, '登录失败', '服务器无法完成本次设备授权，请返回客户端重试。', false)
+            } else {
+              sendRedirect(res, oidcFailureLocation(flow.settings, 'login_failed'), [clearFlowCookie])
+            }
           }
+          return
+        }
+
+        if (pathname === '/auth/desktop/activation/start' && req.method === 'POST') {
+          if (desktopRuntime === undefined || desktopIssuer === undefined) {
+            throw new AuthError('INVALID_INPUT', '服务器尚未启用桌面客户端授权')
+          }
+          const body = await readJson(req, maxBodyBytes)
+          const label = (stringField(body, 'label') as string).trim()
+          const appVersion = (stringField(body, 'appVersion') as string).trim()
+          if (label.length === 0 || label.length > 128 || appVersion.length === 0 || appVersion.length > 64) {
+            throw new AuthError('INVALID_INPUT', '设备名称或客户端版本无效')
+          }
+          const signaturePublicJwk = desktopPublicJwkField(body, 'signaturePublicJwk', 'Ed25519')
+          const encryptionPublicJwk = desktopPublicJwkField(body, 'encryptionPublicJwk', 'X25519')
+          const flowId = randomUUID()
+          const challenge = oidc.randomNonce()
+          const desktop: PendingDesktopActivation = {
+            flowId,
+            challenge,
+            label,
+            appVersion,
+            signaturePublicJwk,
+            encryptionPublicJwk,
+          }
+          const { authorizationUrl } = await createOidcFlow(desktop)
+          const expiresAt = Date.now() + OIDC_FLOW_TTL_MS
+          const activationInput: DesktopActivationInput = {
+            flowId,
+            challenge,
+            authorizationUrl: authorizationUrl.href,
+            signatureKeyThumbprint: await desktopJwkThumbprint(signaturePublicJwk as DesktopPublicJwk),
+            encryptionKeyThumbprint: await desktopJwkThumbprint(encryptionPublicJwk as DesktopPublicJwk),
+          }
+          sendJson(res, 201, { activation: await desktopRuntime.signActivation(activationInput, expiresAt) })
+          return
+        }
+
+        if (pathname === '/auth/desktop/activation/complete' && req.method === 'POST') {
+          if (desktopRuntime === undefined) throw new AuthError('INVALID_INPUT', '服务器尚未启用桌面客户端授权')
+          const body = await readJson(req, maxBodyBytes)
+          const result = await desktopRuntime.finishActivation(
+            stringField(body, 'flowId') as string,
+            stringField(body, 'proof') as string,
+          )
+          if (result === undefined) sendJson(res, 202, { status: 'pending' })
+          else sendJson(res, 200, result)
+          return
+        }
+
+        if (pathname === '/auth/desktop/lease/renew' && req.method === 'POST') {
+          if (desktopRuntime === undefined) throw new AuthError('INVALID_INPUT', '服务器尚未启用桌面客户端授权')
+          const body = await readJson(req, maxBodyBytes)
+          sendJson(res, 200, await desktopRuntime.renew(
+            stringField(body, 'lease') as string,
+            stringField(body, 'proof') as string,
+          ))
+          return
+        }
+
+        if (pathname === '/auth/desktop/config/sync' && req.method === 'POST') {
+          if (desktopRuntime === undefined) throw new AuthError('INVALID_INPUT', '服务器尚未启用桌面客户端授权')
+          const body = await readJson(req, maxBodyBytes)
+          sendJson(res, 200, await desktopRuntime.sync(
+            stringField(body, 'lease') as string,
+            stringField(body, 'proof') as string,
+          ))
           return
         }
 
@@ -1096,6 +1322,20 @@ export function apply(ctx: Context, config: Config = {}): void {
         if (pathname === '/auth/system/managed-models/deepseek-official' && req.method === 'DELETE') {
           requireAdmin(principal)
           await ctx.credentials.unset(credentialRef(SHARED_DEEPSEEK_API_KEY_ENV))
+          sendJson(res, 200, { managedModels: await managedModelsStatus(ctx) })
+          return
+        }
+
+        if (pathname === '/auth/system/managed-models/deepseek-official/models' && req.method === 'PUT') {
+          requireAdmin(principal)
+          if (!ctx.settings.writable) throw new AuthError('INVALID_INPUT', '模型站点配置文件不可写')
+          const body = await readJson(req, maxBodyBytes)
+          const models = managedOfficialModels(ctx, stringArrayField(body, 'models'))
+          await ctx.settings.mutate(DEEPSEEK_SETTINGS_NAMESPACE, [{
+            op: 'set',
+            path: ['sharedModels'],
+            value: models,
+          }])
           sendJson(res, 200, { managedModels: await managedModelsStatus(ctx) })
           return
         }
@@ -1259,6 +1499,35 @@ export function apply(ctx: Context, config: Config = {}): void {
           return
         }
 
+        if (pathname === '/auth/system/desktop/signing-key' && req.method === 'GET') {
+          requireAdmin(principal)
+          if (desktopRuntime === undefined) throw new AuthError('INVALID_INPUT', '服务器尚未启用桌面客户端授权')
+          sendJson(res, 200, {
+            issuer: desktopIssuer,
+            publicJwk: await desktopRuntime.publicSigningJwk(),
+          })
+          return
+        }
+
+        if (pathname === '/auth/system/desktop/devices' && req.method === 'GET') {
+          requireAdmin(principal)
+          if (desktopRuntime === undefined) throw new AuthError('INVALID_INPUT', '服务器尚未启用桌面客户端授权')
+          sendJson(res, 200, { devices: desktopRuntime.listDevices() })
+          return
+        }
+
+        const desktopDeviceMatch = /^\/auth\/system\/desktop\/devices\/([^/]+)\/revoke$/.exec(pathname)
+        if (desktopDeviceMatch !== null && req.method === 'POST') {
+          requireAdmin(principal)
+          if (desktopRuntime === undefined) throw new AuthError('INVALID_INPUT', '服务器尚未启用桌面客户端授权')
+          sendJson(res, 200, {
+            device: await desktopRuntime.revoke(
+              decodeURIComponent(desktopDeviceMatch[1] as string) as DesktopDeviceId,
+            ),
+          })
+          return
+        }
+
         if (pathname === '/auth/system' && req.method === 'GET') {
           requireAdmin(principal)
           const users = ctx.auth.listUsers()
@@ -1285,6 +1554,11 @@ export function apply(ctx: Context, config: Config = {}): void {
                 httpOnly: true,
                 sameSite: 'Lax',
                 secure,
+              },
+              desktop: {
+                enabled: desktopRuntime !== undefined,
+                issuer: desktopIssuer,
+                leaseDays: config.desktopLeaseDays ?? 30,
               },
             },
             isolation: {

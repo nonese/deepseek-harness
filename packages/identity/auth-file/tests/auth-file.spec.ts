@@ -30,6 +30,35 @@ async function boot(): Promise<Context> {
 }
 
 describe('file authentication provider', () => {
+  it('persists desktop devices and enforces account and revocation state', async () => {
+    const loaded = await boot()
+    const administrator = loaded.auth.listUsers()[0]
+    expect(administrator).toBeDefined()
+    const device = await loaded.auth.registerDesktopDevice({
+      userId: administrator!.id,
+      label: 'Office PC',
+      appVersion: '0.1.2-alpha.2',
+      signaturePublicJwk: { kty: 'OKP', crv: 'Ed25519', x: 'signature-public' },
+      encryptionPublicJwk: { kty: 'OKP', crv: 'X25519', x: 'encryption-public' },
+    })
+    const expiresAt = new Date(Date.now() + 60_000).toISOString()
+    await loaded.auth.touchDesktopDevice(device.id, expiresAt)
+    expect(loaded.auth.getDesktopDevice(device.id)).toMatchObject({
+      label: 'Office PC', leaseExpiresAt: expiresAt,
+    })
+
+    await loaded.fiber.dispose()
+    ctx = new Context()
+    await ctx.plugin(FileAuthService, {
+      root: root as string,
+      bootstrapPasswordEnv: 'HARNESS_TEST_BOOTSTRAP_PASSWORD',
+      sessionTtlHours: 1,
+    })
+    expect(ctx.auth.getDesktopDevice(device.id)).toMatchObject({ id: device.id, userId: administrator!.id })
+    await ctx.auth.revokeDesktopDevice(device.id)
+    await expect(ctx.auth.touchDesktopDevice(device.id)).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  })
+
   it('can provide an empty service for a closed runtime that supplies no login surface', async () => {
     root = await mkdtemp(join(tmpdir(), 'harness-auth-file-empty-'))
     ctx = new Context()

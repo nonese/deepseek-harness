@@ -135,10 +135,11 @@ function prompt(ctx: Context) {
 }
 
 describe('request-level dynamic configuration', () => {
-  it('uses the administrator credential only for an opted-in owner and the exact Flash model', async () => {
+  it('uses the administrator credential only for opted-in models selected by the administrator', async () => {
     vi.stubEnv('DEEPSEEK_API_KEY', '')
     const dir = await home()
     const server = await mockServer([
+      { kind: 'sse', events: textEvents },
       { kind: 'sse', events: textEvents },
       { kind: 'sse', events: textEvents },
       { kind: 'sse', events: textEvents },
@@ -170,30 +171,40 @@ describe('request-level dynamic configuration', () => {
     })
     await ctx.credentials.set(KEY_REF, 'global-key-must-not-leak')
     await ctx.credentials.set(SHARED_KEY_REF, 'administrator-key')
-    await ctx.plugin(LlmDeepSeek, { baseURL: server.url })
+    await ctx.plugin(LlmDeepSeek, {
+      baseURL: server.url,
+      sharedModels: ['deepseek-v4-flash', 'deepseek-v4-pro'],
+    })
 
     await assemble(ctx, {
-      model: LlmDeepSeek.SHARED_DEEPSEEK_MODEL,
+      model: LlmDeepSeek.DEFAULT_SHARED_DEEPSEEK_MODELS[0],
       messages: [],
       sessionId: SessionId('managed-session'),
     })
     expect(server.headers[0]?.authorization).toBe('Bearer administrator-key')
 
-    optedIn.value = false
     await assemble(ctx, {
-      model: LlmDeepSeek.SHARED_DEEPSEEK_MODEL,
+      model: 'deepseek-v4-pro',
       messages: [],
       sessionId: SessionId('managed-session'),
     })
-    expect(server.headers[1]?.authorization).toBe('Bearer personal-key')
+    expect(server.headers[1]?.authorization).toBe('Bearer administrator-key')
 
-    optedIn.value = true
+    optedIn.value = false
     await assemble(ctx, {
-      model: 'deepseek-chat',
+      model: 'deepseek-v4-pro',
       messages: [],
       sessionId: SessionId('managed-session'),
     })
     expect(server.headers[2]?.authorization).toBe('Bearer personal-key')
+
+    optedIn.value = true
+    await assemble(ctx, {
+      model: 'deepseek-v4-flash-vision-exp',
+      messages: [],
+      sessionId: SessionId('managed-session'),
+    })
+    expect(server.headers[3]?.authorization).toBe('Bearer personal-key')
   })
 
   it('does not fall back to the process-wide credential for a managed-project owner', async () => {
@@ -226,7 +237,7 @@ describe('request-level dynamic configuration', () => {
     await ctx.plugin(LlmDeepSeek, { baseURL: server.url })
 
     const result = await assemble(ctx, {
-      model: LlmDeepSeek.SHARED_DEEPSEEK_MODEL,
+      model: LlmDeepSeek.DEFAULT_SHARED_DEEPSEEK_MODELS[0],
       messages: [],
       sessionId: SessionId('managed-session'),
     })

@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-30-administrator-managed-model-sites.md
-2026-08-30-administrator-managed-model-sites.md: 398fb0d521d6f050ad26264bc0b07f5b85adc6c5
-2026-08-30-administrator-managed-model-sites.zh.md: 1a429f92313dc0c0179306455fb96fc6885aa5cc
+2026-08-30-administrator-managed-model-sites.md: 838ddb1b0c8bf1fd5dcf5231837e7f7a15821838
+2026-08-30-administrator-managed-model-sites.zh.md: 808cf49b75bc9200844b063ef49ba88b3c387cfb
