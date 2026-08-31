@@ -1,13 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import {
+  useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore,
+  type DragEvent, type FormEvent, type ReactNode,
+} from 'react'
 import {
   IconChevronRightOutline14,
+  IconCloseOutline16,
   IconFolderClose16,
+  IconFolderOpenOutline16,
   IconNewChatOutline16,
   IconSettingsOutline16,
   IconUserOutline16,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ClientAuthUser } from './auth-state.ts'
-import { ProjectFileBrowser } from './ProjectFileBrowser.tsx'
+import { ProjectFileBrowser, uploadProjectFile } from './ProjectFileBrowser.tsx'
 import css from './HarnessPortal.module.css'
 import type { WebTranslate } from './locales.ts'
 
@@ -174,6 +179,17 @@ function relativeTime(timestamp: number | string | undefined, t: WebTranslate): 
   return days < 30 ? t('time.daysAgo', { count: days }) : new Date(time).toLocaleDateString()
 }
 
+function workspaceFileTransfer(event: DragEvent<HTMLElement>): DataTransfer | undefined {
+  const transfer = event.dataTransfer
+  if (!transfer.types.includes('Files')) return undefined
+  const items = Array.from(transfer.items).filter(item => item.kind === 'file')
+  if (items.length > 0) {
+    return items.every(item => item.type.startsWith('image/')) ? undefined : transfer
+  }
+  const files = Array.from(transfer.files)
+  return files.length > 0 && files.every(file => file.type.startsWith('image/')) ? undefined : transfer
+}
+
 type PortalView = 'projects' | 'runtime' | 'settings' | 'admin' | 'system'
 
 const PORTAL_VIEWS = new Set<PortalView>(['projects', 'runtime', 'settings', 'admin', 'system'])
@@ -191,9 +207,21 @@ export interface HarnessPortalProps {
   user: ClientAuthUser
   t: WebTranslate
   renderRuntime(): ReactNode
+  activeWorkspace?: ActiveWorkspaceSource
   openWorkspace(workspaceId: string): void
   startSession(workspaceId?: string): void
   onLogout(): Promise<void>
+}
+
+/** Current runtime Workspace projection supplied by the activated client Controllers. */
+export interface ActiveWorkspaceSource {
+  getSnapshot(): string | undefined
+  subscribe(listener: () => void): () => void
+}
+
+const EMPTY_ACTIVE_WORKSPACE: ActiveWorkspaceSource = {
+  getSnapshot: () => undefined,
+  subscribe: () => () => {},
 }
 
 export function HarnessPortal(props: HarnessPortalProps) {
@@ -205,6 +233,38 @@ export function HarnessPortal(props: HarnessPortalProps) {
   const [creating, setCreating] = useState(false)
   const [projectName, setProjectName] = useState('')
   const [browsingProject, setBrowsingProject] = useState<ProjectView>()
+  const [pendingWorkspaceId, setPendingWorkspaceId] = useState<string>()
+  const [runtimeFilesOpen, setRuntimeFilesOpen] = useState(true)
+  const [runtimeFilesRevision, setRuntimeFilesRevision] = useState(0)
+  const [runtimeDragActive, setRuntimeDragActive] = useState(false)
+  const [runtimeUploading, setRuntimeUploading] = useState(false)
+  const [runtimeUploadStatus, setRuntimeUploadStatus] = useState<{
+    kind: 'success' | 'error'
+    text: string
+  }>()
+  const runtimeDragDepth = useRef(0)
+  const runtimeUploadController = useRef<AbortController>()
+  const activeWorkspace = props.activeWorkspace ?? EMPTY_ACTIVE_WORKSPACE
+  const activeWorkspaceId = useSyncExternalStore(
+    listener => activeWorkspace.subscribe(listener),
+    () => activeWorkspace.getSnapshot(),
+    () => activeWorkspace.getSnapshot(),
+  )
+  const runtimeProjectId = activeWorkspaceId ?? pendingWorkspaceId
+  const runtimeProject = useMemo(
+    () => projects.find(project => project.id === runtimeProjectId),
+    [projects, runtimeProjectId],
+  )
+
+  useEffect(() => {
+    runtimeUploadController.current?.abort()
+    runtimeUploadController.current = undefined
+    runtimeDragDepth.current = 0
+    setRuntimeDragActive(false)
+    setRuntimeUploading(false)
+    setRuntimeUploadStatus(undefined)
+    return () => { runtimeUploadController.current?.abort() }
+  }, [runtimeProjectId])
 
   const selectView = useCallback((next: PortalView): void => {
     if (typeof location !== 'undefined') {
@@ -232,6 +292,7 @@ export function HarnessPortal(props: HarnessPortalProps) {
   useEffect(() => { void refreshProjects() }, [refreshProjects])
 
   const openProject = (project: ProjectView): void => {
+    setPendingWorkspaceId(project.id)
     props.openWorkspace(project.id)
     selectView('runtime')
   }
@@ -242,6 +303,7 @@ export function HarnessPortal(props: HarnessPortalProps) {
       setCreating(true)
       return
     }
+    setPendingWorkspaceId(first.id)
     props.startSession(first.id)
     selectView('runtime')
   }
@@ -263,13 +325,145 @@ export function HarnessPortal(props: HarnessPortalProps) {
     })
   }
 
+  const uploadRuntimeFiles = async (files: readonly File[]): Promise<void> => {
+    const project = runtimeProject
+    if (project === undefined || files.length === 0) return
+    const controller = new AbortController()
+    runtimeUploadController.current?.abort()
+    runtimeUploadController.current = controller
+    setRuntimeUploading(true)
+    setRuntimeUploadStatus(undefined)
+    let uploaded = 0
+    try {
+      for (const file of files) {
+        await uploadProjectFile(project.id, '', file, controller.signal, t)
+        uploaded += 1
+      }
+      setRuntimeUploadStatus({
+        kind: 'success',
+        text: t('projectFiles.conversationUploadComplete', { count: uploaded, name: project.name }),
+      })
+      setRuntimeFilesRevision(value => value + 1)
+      setRuntimeFilesOpen(true)
+    } catch (reason) {
+      if (!(reason instanceof DOMException && reason.name === 'AbortError')) {
+        setRuntimeUploadStatus({
+          kind: 'error',
+          text: reason instanceof Error ? reason.message : String(reason),
+        })
+        if (uploaded > 0) setRuntimeFilesRevision(value => value + 1)
+      }
+    } finally {
+      if (runtimeUploadController.current === controller) runtimeUploadController.current = undefined
+      if (!controller.signal.aborted) setRuntimeUploading(false)
+    }
+  }
+
+  const enterRuntimeFileDrag = (event: DragEvent<HTMLElement>): void => {
+    if (runtimeProject === undefined || workspaceFileTransfer(event) === undefined) return
+    event.preventDefault()
+    event.stopPropagation()
+    runtimeDragDepth.current += 1
+    setRuntimeUploadStatus(undefined)
+    setRuntimeDragActive(true)
+  }
+
+  const continueRuntimeFileDrag = (event: DragEvent<HTMLElement>): void => {
+    const transfer = workspaceFileTransfer(event)
+    if (runtimeProject === undefined || transfer === undefined) return
+    event.preventDefault()
+    event.stopPropagation()
+    transfer.dropEffect = 'copy'
+  }
+
+  const leaveRuntimeFileDrag = (event: DragEvent<HTMLElement>): void => {
+    if (runtimeProject === undefined || workspaceFileTransfer(event) === undefined) return
+    event.preventDefault()
+    event.stopPropagation()
+    runtimeDragDepth.current = Math.max(0, runtimeDragDepth.current - 1)
+    if (runtimeDragDepth.current === 0) setRuntimeDragActive(false)
+  }
+
+  const dropRuntimeFiles = (event: DragEvent<HTMLElement>): void => {
+    if (runtimeProject === undefined || workspaceFileTransfer(event) === undefined) return
+    event.preventDefault()
+    event.stopPropagation()
+    runtimeDragDepth.current = 0
+    setRuntimeDragActive(false)
+    void uploadRuntimeFiles(Array.from(event.dataTransfer.files))
+  }
+
   if (view === 'runtime') {
     return (
       <div className={css.runtime}>
         <button className={css.returnButton} type="button" onClick={() => { selectView('projects') }}>
           {t('nav.backProjects')}
         </button>
-        <div className={css.runtimeBody}>{props.renderRuntime()}</div>
+        <div className={css.runtimeLayout}>
+          <div
+            className={css.runtimeBody}
+            role="region"
+            aria-label={t('runtime.conversationArea')}
+            onDragEnter={enterRuntimeFileDrag}
+            onDragOver={continueRuntimeFileDrag}
+            onDragLeave={leaveRuntimeFileDrag}
+            onDrop={dropRuntimeFiles}
+          >
+            {props.renderRuntime()}
+            {(runtimeDragActive || runtimeUploading) && runtimeProject !== undefined && (
+              <div className={css.runtimeDropOverlay} role="status">
+                <span className={css.runtimeDropIcon}><IconFolderOpenOutline16 size={28} /></span>
+                <strong>{runtimeUploading
+                  ? t('projectFiles.conversationUploading', { name: runtimeProject.name })
+                  : t('projectFiles.conversationDropUpload')}</strong>
+                <span>{t('projectFiles.conversationDropDestination', { name: runtimeProject.name })}</span>
+                <small>{t('projectFiles.dropOfficeFormats')}</small>
+              </div>
+            )}
+            {runtimeUploadStatus !== undefined && !runtimeUploading && (
+              <div
+                className={runtimeUploadStatus.kind === 'error'
+                  ? `${css.runtimeUploadStatus} ${css.runtimeUploadError}`
+                  : css.runtimeUploadStatus}
+                role={runtimeUploadStatus.kind === 'error' ? 'alert' : 'status'}
+              >
+                {runtimeUploadStatus.text}
+              </div>
+            )}
+          </div>
+          {runtimeFilesOpen
+            ? (
+              <aside className={css.runtimeFilePanel}>
+                {runtimeProject === undefined
+                  ? (
+                    <section className={css.runtimeFileEmpty} aria-label={t('projectFiles.currentTitle')}>
+                      <header>
+                        <div><IconFolderOpenOutline16 size={18} /><strong>{t('projectFiles.currentTitle')}</strong></div>
+                        <button type="button" aria-label={t('projectFiles.collapse')}
+                          onClick={() => { setRuntimeFilesOpen(false) }}><IconCloseOutline16 size={16} /></button>
+                      </header>
+                      <p>{loading ? t('projects.loading') : t('projectFiles.noCurrentProject')}</p>
+                    </section>
+                  )
+                  : (
+                    <ProjectFileBrowser
+                      key={runtimeProject.id}
+                      variant="panel"
+                      project={runtimeProject}
+                      t={t}
+                      refreshRevision={runtimeFilesRevision}
+                      onClose={() => { setRuntimeFilesOpen(false) }}
+                    />
+                  )}
+              </aside>
+            )
+            : (
+              <button className={css.runtimeFileExpand} type="button" aria-label={t('projectFiles.expand')}
+                title={t('projectFiles.expand')} onClick={() => { setRuntimeFilesOpen(true) }}>
+                <IconFolderOpenOutline16 size={17} /><span>{t('projects.files')}</span>
+              </button>
+            )}
+        </div>
       </div>
     )
   }

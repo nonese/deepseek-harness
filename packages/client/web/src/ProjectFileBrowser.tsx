@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import {
   IconChevronRightOutline14,
+  IconChevronLeftOutline14,
   IconCloseOutline16,
   IconCodeOutline16,
   IconDownloadOutline16,
   IconFolderClose16,
   IconFolderOpenOutline16,
   IconPlusOutline16,
+  IconRefreshOutline16,
   MarkdownText,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { WebTranslate } from './locales.ts'
@@ -68,6 +70,28 @@ function projectFileUrl(
   return `/auth/projects/${encodeURIComponent(projectId)}/files${suffix}${encodedQuery === '' ? '' : `?${encodedQuery}`}`
 }
 
+/** Upload one browser File without buffering it into JSON or base64. */
+export async function uploadProjectFile(
+  projectId: string,
+  path: string,
+  file: File,
+  signal: AbortSignal,
+  t: WebTranslate,
+): Promise<void> {
+  const response = await fetch(projectFileUrl(projectId, 'upload', path, file.name), {
+    method: 'PUT',
+    credentials: 'same-origin',
+    headers: { 'content-type': file.type || 'application/octet-stream' },
+    body: file,
+    signal,
+  })
+  const body: unknown = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    throw new Error((body as ApiErrorBody).error?.message
+      ?? t('projectFiles.requestFailure', { status: response.status }))
+  }
+}
+
 function formatBytes(bytes: number | undefined, t: WebTranslate): string {
   if (bytes === undefined) return '—'
   if (bytes < 1024) return `${String(bytes)} ${t('units.bytes')}`
@@ -90,11 +114,19 @@ function errorMessage(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason)
 }
 
+function carriesFiles(event: DragEvent<HTMLElement>): boolean {
+  return event.dataTransfer.types.includes('Files')
+}
+
 /** Authenticated browser for one program-managed project directory. */
-export function ProjectFileBrowser({ project, onClose, t }: {
+export function ProjectFileBrowser({
+  project, onClose, t, variant = 'dialog', refreshRevision = 0,
+}: {
   project: { id: string; name: string }
   onClose: () => void
   t: WebTranslate
+  variant?: 'dialog' | 'panel'
+  refreshRevision?: number
 }) {
   const [currentPath, setCurrentPath] = useState('')
   const [entries, setEntries] = useState<ProjectFileEntry[]>([])
@@ -106,10 +138,12 @@ export function ProjectFileBrowser({ project, onClose, t }: {
   const [previewError, setPreviewError] = useState<string>()
   const [listingRevision, setListingRevision] = useState(0)
   const [uploading, setUploading] = useState(false)
+  const [dragActive, setDragActive] = useState(false)
   const [uploadMessage, setUploadMessage] = useState<string>()
   const [uploadError, setUploadError] = useState<string>()
   const uploadInput = useRef<HTMLInputElement>(null)
   const uploadController = useRef<AbortController>()
+  const dragDepth = useRef(0)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -129,7 +163,7 @@ export function ProjectFileBrowser({ project, onClose, t }: {
         if (!controller.signal.aborted) setListing(false)
       })
     return () => { controller.abort() }
-  }, [currentPath, listingRevision, project.id, t])
+  }, [currentPath, listingRevision, project.id, refreshRevision, t])
 
   useEffect(() => {
     if (selected === undefined || !selected.previewable) return
@@ -153,12 +187,13 @@ export function ProjectFileBrowser({ project, onClose, t }: {
   }, [project.id, selected, t])
 
   useEffect(() => {
+    if (variant !== 'dialog') return
     const closeOnEscape = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') onClose()
     }
     addEventListener('keydown', closeOnEscape)
     return () => { removeEventListener('keydown', closeOnEscape) }
-  }, [onClose])
+  }, [onClose, variant])
 
   useEffect(() => () => { uploadController.current?.abort() }, [])
 
@@ -182,9 +217,7 @@ export function ProjectFileBrowser({ project, onClose, t }: {
     }
   }
 
-  const uploadFiles = async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
-    const files = Array.from(event.currentTarget.files ?? [])
-    event.currentTarget.value = ''
+  const uploadFiles = async (files: readonly File[]): Promise<void> => {
     if (files.length === 0) return
     const controller = new AbortController()
     uploadController.current?.abort()
@@ -195,18 +228,7 @@ export function ProjectFileBrowser({ project, onClose, t }: {
     let uploaded = 0
     try {
       for (const file of files) {
-        const response = await fetch(projectFileUrl(project.id, 'upload', currentPath, file.name), {
-          method: 'PUT',
-          credentials: 'same-origin',
-          headers: { 'content-type': file.type || 'application/octet-stream' },
-          body: file,
-          signal: controller.signal,
-        })
-        const body: unknown = await response.json().catch(() => ({}))
-        if (!response.ok) {
-          throw new Error((body as ApiErrorBody).error?.message
-            ?? t('projectFiles.requestFailure', { status: response.status }))
-        }
+        await uploadProjectFile(project.id, currentPath, file, controller.signal, t)
         uploaded += 1
       }
       setUploadMessage(t('projectFiles.uploadComplete', { count: uploaded }))
@@ -222,49 +244,105 @@ export function ProjectFileBrowser({ project, onClose, t }: {
     }
   }
 
-  return (
-    <div className={css.backdrop} role="presentation" onMouseDown={(event) => {
-      if (event.currentTarget === event.target) onClose()
-    }}>
-      <section
-        className={selected === undefined ? css.dialog : `${css.dialog} ${css.dialogPreview}`}
-        role="dialog"
-        aria-modal="true"
-        aria-label={t('projectFiles.dialogTitle', { name: project.name })}
-      >
-        <header className={css.header}>
-          <div className={css.heading}>
-            <span className={css.headingIcon}><IconFolderOpenOutline16 size={20} /></span>
-            <div>
-              <h2>{t('projectFiles.title')}</h2>
-              <p>{project.name}</p>
-            </div>
+  const enterFileDrag = (event: DragEvent<HTMLElement>): void => {
+    if (!carriesFiles(event)) return
+    event.preventDefault()
+    dragDepth.current += 1
+    setDragActive(true)
+  }
+
+  const continueFileDrag = (event: DragEvent<HTMLElement>): void => {
+    if (!carriesFiles(event)) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+  }
+
+  const leaveFileDrag = (event: DragEvent<HTMLElement>): void => {
+    if (!carriesFiles(event)) return
+    event.preventDefault()
+    dragDepth.current = Math.max(0, dragDepth.current - 1)
+    if (dragDepth.current === 0) setDragActive(false)
+  }
+
+  const dropFiles = (event: DragEvent<HTMLElement>): void => {
+    if (!carriesFiles(event)) return
+    event.preventDefault()
+    dragDepth.current = 0
+    setDragActive(false)
+    void uploadFiles(Array.from(event.dataTransfer.files))
+  }
+
+  const browserClass = variant === 'panel'
+    ? selected === undefined ? css.panel : `${css.panel} ${css.panelPreview}`
+    : selected === undefined ? css.dialog : `${css.dialog} ${css.dialogPreview}`
+
+  const browser = (
+    <section
+      className={dragActive ? `${browserClass} ${css.dragActive}` : browserClass}
+      role={variant === 'dialog' ? 'dialog' : 'region'}
+      aria-modal={variant === 'dialog' ? true : undefined}
+      aria-label={variant === 'dialog'
+        ? t('projectFiles.dialogTitle', { name: project.name })
+        : t('projectFiles.panelLabel', { name: project.name })}
+      onDragEnter={enterFileDrag}
+      onDragOver={continueFileDrag}
+      onDragLeave={leaveFileDrag}
+      onDrop={dropFiles}
+    >
+      <header className={css.header}>
+        <div className={css.heading}>
+          <span className={css.headingIcon}><IconFolderOpenOutline16 size={20} /></span>
+          <div>
+            <h2>{variant === 'panel' ? t('projectFiles.currentTitle') : t('projectFiles.title')}</h2>
+            <p>{project.name}</p>
           </div>
-          <button className={css.closeButton} type="button" aria-label={t('projectFiles.close')} onClick={onClose} autoFocus>
-            <IconCloseOutline16 size={17} />
+        </div>
+        <button
+          className={css.closeButton}
+          type="button"
+          aria-label={variant === 'panel' ? t('projectFiles.collapse') : t('projectFiles.close')}
+          onClick={onClose}
+          autoFocus={variant === 'dialog'}
+        >
+          <IconCloseOutline16 size={17} />
+        </button>
+      </header>
+
+      <nav className={css.breadcrumbs} aria-label={t('projectFiles.path')}>
+        <button type="button" onClick={() => { navigate('') }}><IconFolderClose16 size={15} />{project.name}</button>
+        {breadcrumbs.map(crumb => (
+          <span key={crumb.path}>
+            <IconChevronRightOutline14 size={13} />
+            <button type="button" onClick={() => { navigate(crumb.path) }}>{crumb.name}</button>
+          </span>
+        ))}
+      </nav>
+
+      <div className={css.toolbar}>
+        <span>{t('projectFiles.uploadDestination', { path: currentPath === '' ? project.name : currentPath })}</span>
+        <input
+          ref={uploadInput}
+          className={css.uploadInput}
+          type="file"
+          multiple
+          aria-label={t('projectFiles.chooseUpload')}
+          onChange={(event) => {
+            const files = Array.from(event.currentTarget.files ?? [])
+            event.currentTarget.value = ''
+            void uploadFiles(files)
+          }}
+        />
+        <div className={css.toolbarActions}>
+          <button
+            className={css.refreshButton}
+            type="button"
+            aria-label={t('projectFiles.refresh')}
+            title={t('projectFiles.refresh')}
+            disabled={listing}
+            onClick={() => { setListingRevision(value => value + 1) }}
+          >
+            <IconRefreshOutline16 size={16} />
           </button>
-        </header>
-
-        <nav className={css.breadcrumbs} aria-label={t('projectFiles.path')}>
-          <button type="button" onClick={() => { navigate('') }}><IconFolderClose16 size={15} />{project.name}</button>
-          {breadcrumbs.map(crumb => (
-            <span key={crumb.path}>
-              <IconChevronRightOutline14 size={13} />
-              <button type="button" onClick={() => { navigate(crumb.path) }}>{crumb.name}</button>
-            </span>
-          ))}
-        </nav>
-
-        <div className={css.toolbar}>
-          <span>{t('projectFiles.uploadDestination', { path: currentPath === '' ? project.name : currentPath })}</span>
-          <input
-            ref={uploadInput}
-            className={css.uploadInput}
-            type="file"
-            multiple
-            aria-label={t('projectFiles.chooseUpload')}
-            onChange={(event) => { void uploadFiles(event) }}
-          />
           <button
             className={css.uploadButton}
             type="button"
@@ -275,100 +353,122 @@ export function ProjectFileBrowser({ project, onClose, t }: {
             {uploading ? t('projectFiles.uploading') : t('projectFiles.upload')}
           </button>
         </div>
-        {(uploadMessage !== undefined || uploadError !== undefined) && (
-          <div className={uploadError === undefined ? css.uploadStatus : `${css.uploadStatus} ${css.uploadStatusError}`}
-            role={uploadError === undefined ? 'status' : 'alert'}>
-            {uploadError ?? uploadMessage}
-          </div>
-        )}
+      </div>
+      {(uploadMessage !== undefined || uploadError !== undefined) && (
+        <div className={uploadError === undefined ? css.uploadStatus : `${css.uploadStatus} ${css.uploadStatusError}`}
+          role={uploadError === undefined ? 'status' : 'alert'}>
+          {uploadError ?? uploadMessage}
+        </div>
+      )}
 
-        <div className={css.content}>
-          <section className={css.filePane} aria-label={t('projectFiles.list')}>
-            <div className={css.columnHeader} aria-hidden="true">
-              <span>{t('projectFiles.name')}</span><span>{t('projectFiles.size')}</span><span>{t('projectFiles.updated')}</span><span />
-            </div>
-            <div className={css.rows} aria-live="polite">
-              {listing && <div className={css.state}>{t('projectFiles.loadingList')}</div>}
-              {!listing && listError !== undefined && <div className={css.error} role="alert">{listError}</div>}
-              {!listing && listError === undefined && entries.length === 0 && (
-                <div className={css.state}>{t('projectFiles.empty')}</div>
-              )}
-              {!listing && entries.map(entry => (
-                <div className={selected?.path === entry.path ? `${css.row} ${css.rowSelected}` : css.row} key={entry.path}>
-                  <span className={css.nameCell}>
-                    {entry.kind === 'directory'
+      <div className={css.content}>
+        <section className={css.filePane} aria-label={t('projectFiles.list')}>
+          <div className={css.columnHeader} aria-hidden="true">
+            <span>{t('projectFiles.name')}</span><span>{t('projectFiles.size')}</span><span>{t('projectFiles.updated')}</span><span />
+          </div>
+          <div className={css.rows} aria-live="polite">
+            {listing && <div className={css.state}>{t('projectFiles.loadingList')}</div>}
+            {!listing && listError !== undefined && <div className={css.error} role="alert">{listError}</div>}
+            {!listing && listError === undefined && entries.length === 0 && (
+              <div className={css.state}>{t('projectFiles.empty')}</div>
+            )}
+            {!listing && entries.map(entry => (
+              <div className={selected?.path === entry.path ? `${css.row} ${css.rowSelected}` : css.row} key={entry.path}>
+                <span className={css.nameCell}>
+                  {entry.kind === 'directory'
+                    ? (
+                      <button type="button" onClick={() => { navigate(entry.path) }}>
+                        <span className={css.entryIcon}><IconFolderClose16 size={18} /></span>
+                        <span>{entry.name}</span>
+                      </button>
+                    )
+                    : entry.previewable
                       ? (
-                        <button type="button" onClick={() => { navigate(entry.path) }}>
-                          <span className={css.entryIcon}><IconFolderClose16 size={18} /></span>
+                        <button
+                          type="button"
+                          aria-pressed={selected?.path === entry.path}
+                          onClick={() => { setSelected(entry) }}
+                        >
+                          <span className={css.entryIcon}><IconCodeOutline16 size={17} /></span>
                           <span>{entry.name}</span>
                         </button>
                       )
-                      : entry.previewable
-                        ? (
-                          <button
-                            type="button"
-                            aria-pressed={selected?.path === entry.path}
-                            onClick={() => { setSelected(entry) }}
-                          >
-                            <span className={css.entryIcon}><IconCodeOutline16 size={17} /></span>
-                            <span>{entry.name}</span>
-                          </button>
-                        )
-                        : (
-                          <a href={projectFileUrl(project.id, 'download', entry.path)} download>
-                            <span className={css.entryIcon}><IconCodeOutline16 size={17} /></span>
-                            <span>{entry.name}</span>
-                          </a>
-                        )}
-                  </span>
-                  <span className={css.metaCell}>{entry.kind === 'file' ? formatBytes(entry.size, t) : '—'}</span>
-                  <span className={css.metaCell}>{formatUpdatedAt(entry.updatedAt)}</span>
-                  <span className={css.downloadCell}>
-                    {entry.kind === 'file' && (
-                      <a
-                        href={projectFileUrl(project.id, 'download', entry.path)}
-                        download
-                        aria-label={t('projectFiles.downloadNamed', { name: entry.name })}
-                        title={t('projectFiles.downloadNamed', { name: entry.name })}
-                      >
-                        <IconDownloadOutline16 size={16} />
-                      </a>
-                    )}
-                  </span>
-                </div>
-              ))}
+                      : (
+                        <a href={projectFileUrl(project.id, 'download', entry.path)} download>
+                          <span className={css.entryIcon}><IconCodeOutline16 size={17} /></span>
+                          <span>{entry.name}</span>
+                        </a>
+                      )}
+                </span>
+                <span className={css.metaCell}>{entry.kind === 'file' ? formatBytes(entry.size, t) : '—'}</span>
+                <span className={css.metaCell}>{formatUpdatedAt(entry.updatedAt)}</span>
+                <span className={css.downloadCell}>
+                  {entry.kind === 'file' && (
+                    <a
+                      href={projectFileUrl(project.id, 'download', entry.path)}
+                      download
+                      aria-label={t('projectFiles.downloadNamed', { name: entry.name })}
+                      title={t('projectFiles.downloadNamed', { name: entry.name })}
+                    >
+                      <IconDownloadOutline16 size={16} />
+                    </a>
+                  )}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {selected !== undefined && (
+          <section className={css.previewPane} aria-label={t('projectFiles.preview')}>
+            <div className={css.previewHeader}>
+              <div>
+                {variant === 'panel' && (
+                  <button className={css.previewBack} type="button" onClick={() => { setSelected(undefined) }}>
+                    <IconChevronLeftOutline14 size={14} />{t('projectFiles.backToList')}
+                  </button>
+                )}
+                <span>{t('projectFiles.preview')}</span>
+                <strong>{selected.name}</strong>
+              </div>
+              <a className={css.downloadButton} href={projectFileUrl(project.id, 'download', selected.path)} download>
+                <IconDownloadOutline16 size={16} />{t('projectFiles.download')}
+              </a>
+            </div>
+            <div className={css.previewBody} aria-live="polite">
+              {previewing && <div className={css.state}>{t('projectFiles.loadingPreview')}</div>}
+              {!previewing && previewError !== undefined && <div className={css.error} role="alert">{previewError}</div>}
+              {!previewing && preview !== undefined && (
+                preview.file.format === 'markdown'
+                  ? <div className={css.markdownPreview}><MarkdownText text={preview.content} labels={markdownLabels} /></div>
+                  : <pre className={css.textPreview}>{preview.content}</pre>
+              )}
             </div>
           </section>
+        )}
+      </div>
 
-          {selected !== undefined && (
-            <section className={css.previewPane} aria-label={t('projectFiles.preview')}>
-              <div className={css.previewHeader}>
-                <div>
-                  <span>{t('projectFiles.preview')}</span>
-                  <strong>{selected.name}</strong>
-                </div>
-                <a className={css.downloadButton} href={projectFileUrl(project.id, 'download', selected.path)} download>
-                  <IconDownloadOutline16 size={16} />{t('projectFiles.download')}
-                </a>
-              </div>
-              <div className={css.previewBody} aria-live="polite">
-                {previewing && <div className={css.state}>{t('projectFiles.loadingPreview')}</div>}
-                {!previewing && previewError !== undefined && <div className={css.error} role="alert">{previewError}</div>}
-                {!previewing && preview !== undefined && (
-                  preview.file.format === 'markdown'
-                    ? <div className={css.markdownPreview}><MarkdownText text={preview.content} labels={markdownLabels} /></div>
-                    : <pre className={css.textPreview}>{preview.content}</pre>
-                )}
-              </div>
-            </section>
-          )}
+      <footer className={css.footer}>
+        <span><IconFolderClose16 size={14} />{t('projectFiles.currentProjectOnly')}</span>
+        <span>{t('projectFiles.hiddenNotice')}</span>
+      </footer>
+
+      {dragActive && (
+        <div className={css.dropOverlay} role="status">
+          <span className={css.dropIcon}><IconPlusOutline16 size={22} /></span>
+          <strong>{t('projectFiles.dropUpload')}</strong>
+          <span>{t('projectFiles.dropOfficeFormats')}</span>
         </div>
+      )}
+    </section>
+  )
 
-        <footer className={css.footer}>
-          <span><IconFolderClose16 size={14} />{t('projectFiles.currentProjectOnly')}</span>
-          <span>{t('projectFiles.hiddenNotice')}</span>
-        </footer>
-      </section>
+  if (variant === 'panel') return browser
+  return (
+    <div className={css.backdrop} role="presentation" onMouseDown={(event) => {
+      if (event.currentTarget === event.target) onClose()
+    }}>
+      {browser}
     </div>
   )
 }

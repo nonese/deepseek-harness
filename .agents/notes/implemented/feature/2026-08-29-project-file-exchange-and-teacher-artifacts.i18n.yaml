@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-29-project-file-exchange-and-teacher-artifacts.md
-2026-08-29-project-file-exchange-and-teacher-artifacts.md: f548f35e5a0a52cdc3d41da964599e7167a0c0f2
-2026-08-29-project-file-exchange-and-teacher-artifacts.zh.md: dbe16935b43f56b8799bd4d8a49a151fd360563a
+2026-08-29-project-file-exchange-and-teacher-artifacts.md: 7896854ffb4d02bb4b584a7e1ad3cc52d0be02bb
+2026-08-29-project-file-exchange-and-teacher-artifacts.zh.md: e97b493871bb0a4ca9c051614ecc0d05ab7c7d6e

@@ -4,7 +4,7 @@ import { useLayoutEffect, useRef, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { Context } from '@deepseek-ai/cordis'
 import type { UiRendererService } from '@deepseek-ai/dsh-client-ui-renderer/client'
-import { HarnessPortal } from './HarnessPortal.tsx'
+import { HarnessPortal, type ActiveWorkspaceSource } from './HarnessPortal.tsx'
 import { LoginPage } from './LoginPage.tsx'
 import { isClientAuthSession, type ClientAuthSession } from './auth-state.ts'
 import { browserTranslate } from './locales.ts'
@@ -96,7 +96,42 @@ interface UiWorkspaceFace {
 }
 
 interface SessionsFace {
+  readonly list: {
+    getSnapshot(): { current: string | undefined }
+    subscribe(listener: () => void): () => void
+  }
   open(sessionId: string): void
+}
+
+interface WorkspacesFace {
+  readonly list: {
+    getSnapshot(): {
+      items: readonly { workspaceId: string; sessionIds: readonly string[] }[]
+    }
+    subscribe(listener: () => void): () => void
+  }
+}
+
+function createActiveWorkspaceSource(
+  workspaces: WorkspacesFace,
+  sessions: SessionsFace,
+): ActiveWorkspaceSource {
+  return {
+    getSnapshot: () => {
+      const current = sessions.list.getSnapshot().current
+      if (current === undefined) return undefined
+      return workspaces.list.getSnapshot().items
+        .find(workspace => workspace.sessionIds.includes(current))?.workspaceId
+    },
+    subscribe: (listener) => {
+      const disposeWorkspaces = workspaces.list.subscribe(listener)
+      const disposeSessions = sessions.list.subscribe(listener)
+      return () => {
+        disposeSessions()
+        disposeWorkspaces()
+      }
+    },
+  }
 }
 
 /** Mount the authenticated project, settings, and administrator shell. */
@@ -109,14 +144,17 @@ export function mountAuthenticatedShell(
   const renderer = ctx.get('uiRenderer')
   const workspace = ctx.get('uiWorkspace') as UiWorkspaceFace | undefined
   const sessions = ctx.get('sessions') as SessionsFace | undefined
-  if (renderer === undefined || workspace === undefined || sessions === undefined) {
+  const workspaces = ctx.get('workspaces') as WorkspacesFace | undefined
+  if (renderer === undefined || workspace === undefined || sessions === undefined || workspaces === undefined) {
     throw new Error(t('runtime.navigationUnavailable'))
   }
+  const activeWorkspace = createActiveWorkspaceSource(workspaces, sessions)
   let root: Root | undefined = createRoot(container)
   root.render(<HarnessPortal
     user={session.user}
     t={t}
     renderRuntime={() => <RuntimeMount renderer={renderer} />}
+    activeWorkspace={activeWorkspace}
     openWorkspace={(workspaceId) => {
       void workspace.connectWorkspace(workspaceId).then((sessionId) => { sessions.open(sessionId) })
     }}

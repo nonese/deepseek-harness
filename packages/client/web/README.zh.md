@@ -27,7 +27,7 @@ kind: "package-library"
 
 组装浏览器应用时使用它：`apps/web` 的 Vite 入口对挂载点运行 `new AppWebEntry(container).run()`。Host 注入 `__HARNESS_MULTI_USER__` 时，entry 会在创建模块前调用 `/auth/session`；匿名用户看到本地/OIDC 登录外壳，已认证用户则先激活插件图，再挂载 Harness portal。普通单用户组合仍保留直接进入启动页的流程。预注入的页面传输是 `seams` 覆盖之前的默认：当 `globalThis.__DSH_TRANSPORT__` 携带 `loadBundle` 时，模块阶段将其采纳为 bundle 传输并跳过 `immediately` 层级的 HTTP 预取，而显式 `seams` 仍然优先（例如外部 `<script>` 执行无法到达页面上下文的 jsdom 测试）。
 
-每个受管项目行会把进入运行时与“文件”操作分开。“文件”会打开同源对话框，提供目录导航、大小受限的文本或 Markdown 预览及附件下载；所有权、隐藏条目、符号链接和路径校验仍以 Host 为授权真源。
+每个受管项目行会把进入运行时与“文件”操作分开。“文件”会打开同源对话框，提供目录导航、大小受限的文本或 Markdown 预览及附件下载。运行时还会在会话旁常驻可收起的文件面板；它跟随当前 Session Workspace，并让用户不离开会话即可通过选择器或拖放上传，包括 Word、PowerPoint 与 Excel 文件。把非图片文件拖到会话主区域会将整批文件上传到该 Workspace 的根目录并刷新文件面板；仅含图片的拖放仍作为会话附件处理。所有权、隐藏条目、符号链接和路径校验仍以 Host 为授权真源。
 
 外壳基础样式会在支持的浏览器中为普通内容自动添加中西文间距。语义化代码以及终端、diff、读取和搜索输出容器会保留源码中的原始间距和列对齐；不支持 `text-autospace` 的浏览器会忽略这两项声明。
 
