@@ -26,6 +26,7 @@ afterEach(() => {
 interface BrowserOpenRecord {
   url: string
   status: number
+  authenticationExchange: boolean
   bootManifest: boolean
   apiKeyPresent: boolean
   dshHomePresent: boolean
@@ -77,6 +78,7 @@ describe.skipIf(!builtArtifactsExist)('dsh web browser-open assembled snapshot',
       readyUrl: normalizeLocalUrl(readyUrl),
       openedUrl: normalizeLocalUrl(opened.url),
       status: opened.status,
+      authenticationExchange: opened.authenticationExchange,
       bootManifest: opened.bootManifest,
       apiKeyPresent: opened.apiKeyPresent,
       dshHomePresent: opened.dshHomePresent,
@@ -84,12 +86,13 @@ describe.skipIf(!builtArtifactsExist)('dsh web browser-open assembled snapshot',
     }).toMatchInlineSnapshot(`
       {
         "apiKeyPresent": false,
+        "authenticationExchange": false,
         "bootManifest": true,
         "dshHomePresent": false,
         "exitCode": 0,
-        "openedUrl": "http://127.0.0.1:{{port}}/?token={{token}}",
+        "openedUrl": "http://127.0.0.1:{{port}}",
         "opening": true,
-        "readyUrl": "http://127.0.0.1:{{port}}/?token={{token}}",
+        "readyUrl": "http://127.0.0.1:{{port}}",
         "status": 200,
         "stderr": "",
       }
@@ -139,7 +142,7 @@ describe.skipIf(!builtArtifactsExist)('dsh web browser-open assembled snapshot',
         "exitCode": 0,
         "opened": false,
         "opening": true,
-        "readyUrl": "http://127.0.0.1:{{port}}/?token={{token}}",
+        "readyUrl": "http://127.0.0.1:{{port}}",
       }
     `)
   })
@@ -184,7 +187,7 @@ describe.skipIf(!builtArtifactsExist)('dsh web browser-open assembled snapshot',
         "exitCode": 0,
         "opened": false,
         "opening": false,
-        "readyUrl": "http://127.0.0.1:{{port}}/?token={{token}}",
+        "readyUrl": "http://127.0.0.1:{{port}}",
         "stderr": "",
       }
     `)

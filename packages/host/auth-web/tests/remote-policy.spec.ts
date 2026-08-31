@@ -7,7 +7,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { AuthPrincipal, AuthUser, UserId, UserPaths } from '@deepseek-ai/dsh-auth'
 import { ApiSessionNotFound } from '@deepseek-ai/dsh-api-session-controller'
 import { SessionId } from '@deepseek-ai/dsh-session'
-import { TypertRemoteFailure } from '@deepseek-ai/dsh-typert-protocol'
+import { remoteErrorOf, type RemoteFailure } from '@deepseek-ai/dsh-typert-protocol'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { userScopedRemotePolicy } from '../src/remote-policy.ts'
 
@@ -122,12 +122,13 @@ function request(namespace: string, method: string, args: Record<string, unknown
   return { namespace, method, args }
 }
 
-async function failure(operation: Promise<unknown>): Promise<TypertRemoteFailure> {
+async function failure(operation: Promise<unknown>): Promise<RemoteFailure> {
   try {
     await operation
-  } catch (error) {
-    expect(error).toBeInstanceOf(TypertRemoteFailure)
-    return error as TypertRemoteFailure
+  } catch (error: unknown) {
+    const failure = remoteErrorOf(error)
+    if (failure === undefined) throw error
+    return failure
   }
   throw new Error('expected Gateway policy failure')
 }
@@ -148,7 +149,7 @@ describe('per-user Remote policy', () => {
       request('session', 'view', { request: { sessionId: 'bob-session' } }),
       vi.fn(() => Promise.resolve({})),
     ))
-    expect(denied.failure).toMatchObject({ code: 'not-found' })
+    expect(denied).toMatchObject({ code: 'auth/not-found' })
     expect(denied.message).not.toContain('bob-session')
   })
 
@@ -165,7 +166,7 @@ describe('per-user Remote policy', () => {
       request('settings', 'read', { namespace: 'llm-deepseek' }),
       () => Promise.resolve({}),
     ))
-    expect(ordinary.failure).toMatchObject({ code: 'forbidden' })
+    expect(ordinary).toMatchObject({ code: 'auth/forbidden' })
 
     current.value = principal(user('alice', 'admin'))
     await expect(policy.invoke(
@@ -186,7 +187,7 @@ describe('per-user Remote policy', () => {
       request('agentPresets', 'copy', { from: 'standard', id: 'mine' }),
       () => Promise.resolve(undefined),
     ))
-    expect(ordinary.failure).toMatchObject({ code: 'forbidden' })
+    expect(ordinary).toMatchObject({ code: 'auth/forbidden' })
 
     current.value = principal(user('alice', 'admin'))
     await expect(policy.invoke(
@@ -209,7 +210,7 @@ describe('per-user Remote policy', () => {
       request('workspace', 'create', { request: { path: escape } }),
       () => Promise.resolve({}),
     ))
-    expect(denied.failure).toMatchObject({ code: 'not-found' })
+    expect(denied).toMatchObject({ code: 'auth/not-found' })
   })
 
   it('publishes the administrator-managed Flash route only to an opted-in user', async () => {
@@ -313,7 +314,7 @@ describe('per-user Remote policy', () => {
     expect((await failure(policy.invoke(
       request('unscoped', 'method'),
       invokeNext,
-    ))).failure.code).toBe('forbidden')
+    ))).code).toBe('auth/forbidden')
     expect(invokeNext).not.toHaveBeenCalled()
 
     const source = (async function *() { yield 'frame' })()
@@ -321,7 +322,7 @@ describe('per-user Remote policy', () => {
     expect((await failure(policy.stream(
       request('unscoped', 'stream'),
       streamNext,
-    ))).failure.code).toBe('forbidden')
+    ))).code).toBe('auth/forbidden')
     expect(streamNext).not.toHaveBeenCalled()
   })
 
@@ -338,13 +339,13 @@ describe('per-user Remote policy', () => {
         request(endpoint[0], endpoint[1]),
         () => Promise.resolve(undefined),
       ))
-      expect(denied.failure.code).toBe('forbidden')
+      expect(denied.code).toBe('auth/forbidden')
     }
     const denied = await failure(policy.invoke(
       request('pluginInventory', 'mutate'),
       () => Promise.resolve(undefined),
     ))
-    expect(denied.failure.code).toBe('forbidden')
+    expect(denied.code).toBe('auth/forbidden')
   })
 
   it('validates managed workspaces, nested identifiers, and live session ownership', async () => {
@@ -367,7 +368,7 @@ describe('per-user Remote policy', () => {
       expect((await failure(policy.invoke(
         request('workspace', 'create', args),
         () => Promise.resolve(undefined),
-      ))).failure.code).toBe('not-found')
+      ))).code).toBe('auth/not-found')
     }
 
     await expect(policy.invoke(
@@ -375,21 +376,24 @@ describe('per-user Remote policy', () => {
       () => Promise.resolve('created'),
     )).resolves.toBe('created')
     for (const body of [
-      {},
       { cwd: join(bob.projects, 'one') },
       { workspaceId: 'bob-workspace' },
       { workspaceId: 'missing-workspace' },
       { cwd: join(alice.projects, 'one'), sessionId: 'bob-session' },
     ]) {
-      await expect(policy.invoke(
+      expect((await failure(policy.invoke(
         request('session', 'create', { request: body }),
         () => Promise.resolve(undefined),
-      )).rejects.toBeInstanceOf(TypertRemoteFailure)
+      ))).code).toBe('auth/not-found')
     }
-    await expect(policy.invoke(
+    expect((await failure(policy.invoke(
+      request('session', 'create', { request: {} }),
+      () => Promise.resolve(undefined),
+    ))).code).toBe('auth/forbidden')
+    expect((await failure(policy.invoke(
       request('session', 'create', { request: [] }),
       () => Promise.resolve(undefined),
-    )).rejects.toBeInstanceOf(TypertRemoteFailure)
+    ))).code).toBe('auth/forbidden')
 
     await expect(policy.invoke(
       request('session', 'view', { nested: [{ agentId: 'live-alice' }, null, 1] }),
@@ -399,12 +403,12 @@ describe('per-user Remote policy', () => {
       expect((await failure(policy.invoke(
         request('session', 'view', { nested: { childSessionId: id } }),
         () => Promise.resolve(undefined),
-      ))).failure.code).toBe('not-found')
+      ))).code).toBe('auth/not-found')
     }
     expect((await failure(policy.invoke(
       request('workspace', 'read', { payload: { beforeWorkspaceId: 'bob-workspace' } }),
       () => Promise.resolve(undefined),
-    ))).failure.code).toBe('not-found')
+    ))).code).toBe('auth/not-found')
   })
 
   it('propagates unexpected session inspection failures', async () => {

@@ -18,6 +18,7 @@ import * as FsPolicy from '@deepseek-ai/dsh-fs-observation-policy'
 import * as ToolFs from '@deepseek-ai/dsh-tool-fs'
 import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 
 const testToolSignal = new AbortController().signal
 
@@ -328,6 +329,7 @@ describe('authenticated user read boundary', () => {
     await ctx.plugin(SystemPrompt)
     await ctx.plugin(ToolRuntime)
     await ctx.plugin(LocalFileSystem, { cwd: project })
+    await ctx.plugin(SessionProjectionRegistry)
     await ctx.plugin(SandboxPolicyService, {
       mode: 'workspace-write',
       maximumMode: 'workspace-write',

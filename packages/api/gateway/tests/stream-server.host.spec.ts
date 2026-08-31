@@ -97,6 +97,18 @@ describe('Remote stream mux server carrier lifecycle', () => {
     await closed
   })
 
+  it('terminates a socket that does not answer the previous heartbeat', async () => {
+    const entry = await startMux(async (_endpoint, _payload, signal) => waitForAbort(signal), 20)
+    const client = await connect(entry.url)
+    const serverSocket = acceptedSocket(entry.mux)
+    serverSocket.removeAllListeners('pong')
+    const terminated = vi.spyOn(serverSocket, 'terminate')
+    const closed = once(client, 'close')
+
+    await vi.waitFor(() => { expect(terminated).toHaveBeenCalledOnce() })
+    await closed
+  })
+
   it('rejects binary, malformed, and duplicate logical-stream messages', async () => {
     const entry = await startMux(async (_endpoint, _payload, signal) => waitForAbort(signal))
 
@@ -242,7 +254,7 @@ const mapFailure: RemoteStreamFailureMapper = error => ({
 
 async function startMux(
   open: RemoteStreamOpener,
-  heartbeatIntervalMs = 30_000,
+  heartbeatIntervalMs = 2_000,
   authorize: (request: IncomingMessage) => ConnectionRequestAuthorization = () => ({
     run: operation => operation(),
   }),

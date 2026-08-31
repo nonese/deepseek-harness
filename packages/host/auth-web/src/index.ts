@@ -30,6 +30,7 @@ import { SHARED_DEEPSEEK_API_KEY_ENV } from '@deepseek-ai/dsh-llm-deepseek'
 import type { PiAiProviderProfile } from '@deepseek-ai/dsh-llm-pi-ai'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { IndexInjection } from '@deepseek-ai/dsh-host-webserver'
+import type {} from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-session'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-workspace'
@@ -57,6 +58,7 @@ export const inject = [
   'settings',
   'sessionController',
   'sessions',
+  'tools',
   'typertGateway',
   'webServer',
   'workspaceRegistry',
@@ -829,9 +831,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     return settings === undefined ? `${target.pathname}${target.search}` : target.href
   }
 
-  ctx.inject(['tools'], (policyCtx) => {
-    policyCtx.tools.guard(exec => dynamicCordisGuard(policyCtx, exec))
-  })
+  ctx.tools.guard(exec => dynamicCordisGuard(ctx, exec))
 
   const route: WebRoute = {
     kind: 'prefix',

@@ -1,30 +1,18 @@
 /** Styled Word document generation. */
 
-import {
-  AlignmentType,
-  BorderStyle,
-  Document,
-  HeadingLevel,
-  Packer,
-  Paragraph,
-  Table,
-  TableCell,
-  TableRow,
-  TextRun,
-  WidthType,
-} from 'docx'
+import type { Paragraph, Table, TableRow } from 'docx'
 import type { WordDocumentRequest } from '@deepseek-ai/dsh-artifacts'
 
-const TABLE_BORDER = { style: BorderStyle.SINGLE, size: 1, color: 'D8DEE9' } as const
-
-function tableOf(headers: string[], rows: string[][], font: string): Table {
+function tableOf(docx: typeof import('docx'), headers: string[], rows: string[][], font: string): Table {
+  const { BorderStyle, Paragraph, Table, TableCell, TableRow, TextRun, WidthType } = docx
+  const border = { style: BorderStyle.SINGLE, size: 1, color: 'D8DEE9' } as const
   const width = headers.length
   const rowOf = (values: string[], header: boolean): TableRow => new TableRow({
     children: Array.from({ length: width }, (_, index) => new TableCell({
       children: [new Paragraph({
         children: [new TextRun({ text: values[index] ?? '', bold: header, font, size: 20 })],
       })],
-      borders: { top: TABLE_BORDER, bottom: TABLE_BORDER, left: TABLE_BORDER, right: TABLE_BORDER },
+      borders: { top: border, bottom: border, left: border, right: border },
       width: { size: Math.floor(100 / width), type: WidthType.PERCENTAGE },
     })),
   })
@@ -46,6 +34,8 @@ export async function renderWord(
   font: string,
   accent: string,
 ): Promise<Uint8Array> {
+  const docx = await import('docx')
+  const { AlignmentType, Document, HeadingLevel, Packer, Paragraph, TextRun } = docx
   const children: Array<Paragraph | Table> = [
     new Paragraph({
       alignment: AlignmentType.CENTER,
@@ -79,7 +69,7 @@ export async function renderWord(
         children: [new TextRun({ text: bullet, font, size: 22 })],
       }))
     }
-    if (section.table !== undefined) children.push(tableOf(section.table.headers, section.table.rows, font))
+    if (section.table !== undefined) children.push(tableOf(docx, section.table.headers, section.table.rows, font))
   }
   const document = new Document({
     creator: request.author ?? 'Harness',

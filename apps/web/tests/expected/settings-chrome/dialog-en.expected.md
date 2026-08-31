@@ -4,9 +4,9 @@
     - button "General":
       - img
       - text: General
-    - button "Models":
+    - button "Model sources":
       - img
-      - text: Models
+      - text: Model sources
     - button "Plugins":
       - img
       - text: Plugins
@@ -17,10 +17,6 @@
   - button "Close":
     - img
     - text: Close
-  - text: Agent preset Applies to sessions you start from now on. Running sessions keep the preset they began with.
-  - button "Standard mode":
-    - text: Standard mode
-    - img
   - text: Permission Choose the default permission mode for new sessions
   - button "Workspace Write":
     - text: Workspace Write

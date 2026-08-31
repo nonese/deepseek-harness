@@ -14,10 +14,10 @@ import {
   SHARED_DEEPSEEK_MODEL,
 } from '@deepseek-ai/dsh-llm-deepseek'
 import type { Config as PiAiConfig, PiAiProviderProfile } from '@deepseek-ai/dsh-llm-pi-ai'
-import { settingsNamespace } from '@deepseek-ai/dsh-settings'
+import type {} from '@deepseek-ai/dsh-settings'
 
 /** Settings namespace that owns custom OpenAI-compatible provider profiles. */
-export const MANAGED_MODEL_SETTINGS_NS = settingsNamespace('llm-pi-ai')
+export const MANAGED_MODEL_SETTINGS_NS = 'llm-pi-ai'
 /** Route prefix reserved for administrator-managed custom sites. */
 export const MANAGED_MODEL_PROVIDER_PREFIX = 'managed-'
 /** Maximum number of custom managed sites one deployment may expose. */

@@ -264,6 +264,9 @@ async function boot(options: BootOptions = {}): Promise<BootResult> {
           }
         },
       } as never)
+      context.provide('tools', {
+        guard: () => () => {},
+      } as never)
       context.provide('typertGateway', {
         registerMiddleware: () => () => Promise.resolve(),
       } as never)

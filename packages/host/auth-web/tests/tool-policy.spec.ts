@@ -61,6 +61,8 @@ describe('dynamic Cordis tool policy', () => {
       ownerForProjectPath: (path: string) => roles.get(path),
     } as never)
     ctx.provide('credentials', {} as never)
+    ctx.provide('llm', {} as never)
+    ctx.provide('settings', {} as never)
     ctx.provide('sessions', {} as never)
     ctx.provide('workspaceRegistry', {} as never)
     ctx.provide('webServer', {

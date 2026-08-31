@@ -33,7 +33,7 @@ kind: "package-reference"
 
 ### 替换品牌
 
-自有身份的部署不组合本包，而是组合另一个占据相同三个槽位的包。占据槽位是唯一的组合路径；这里不存在任何品牌配置面。
+自有身份的部署不组合本包，而是组合另一个占据侧栏与会话首屏槽位的包。占据槽位是唯一的组合路径；这里不存在任何品牌配置面。
 
 -----
 
@@ -43,7 +43,7 @@ kind: "package-reference"
 <details>
 <summary>实现细节——点击展开</summary>
 
-三个填充作为一组声明感知的注册安装：嵌套的 `ctx.slots.inject()` 调用等待侧栏与会话声明，因此无论本行在声明者之前还是之后激活，这组注册都能工作；任一声明消失时全部三个填充一并撤回，HMR 期间也不会留下残缺的品牌混合。浏览器半部是 [`src/client/index.ts`](src/client/index.ts)；node 半部是一个空 Loader 座位。浏览器标题是构建环境的事（`DSH_CLIENT_TITLE`），不在槽位系统之内。
+三个填充作为一组声明感知的注册安装：嵌套的 `ctx.slots.inject()` 调用等待所有声明，因此无论本行在声明者之前还是之后激活，这组注册都能工作；任一声明消失时所有填充一并撤回，HMR 期间也不会留下残缺的品牌混合。浏览器半部是 [`src/client/index.ts`](src/client/index.ts)；node 半部是一个空 Loader 座位。浏览器标题是构建环境的事（`DSH_CLIENT_TITLE`），不在槽位系统之内。
 
 </details>
 

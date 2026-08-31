@@ -16,12 +16,21 @@ import { ApiSessionNotFound } from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type { WorkspaceFollowFrame, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/types'
 import type { SessionId } from '@deepseek-ai/dsh-session'
-import { TypertRemoteFailure } from '@deepseek-ai/dsh-typert-protocol'
+import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import {
   configuredManagedProviderModels,
   managedCustomProfiles,
 } from './managed-models.ts'
+
+declare module '@deepseek-ai/dsh-typert-protocol' {
+  interface RemoteErrorDetailsMap {
+    /** Authenticated principal lacks permission for the requested Remote operation. */
+    'auth/forbidden': {}
+    /** Resource is absent from the authenticated principal's projection. */
+    'auth/not-found': {}
+  }
+}
 
 const ADMIN_NAMESPACES = new Set([
   'cordisInspect',
@@ -94,15 +103,11 @@ function endpointOf(request: InvokeRemoteRequest): string {
 }
 
 function forbidden(message: string): never {
-  throw new TypertRemoteFailure({ code: 'forbidden', message, details: {} })
+  throw new RemoteError('auth/forbidden', message, {})
 }
 
 function hidden(): never {
-  throw new TypertRemoteFailure({
-    code: 'not-found',
-    message: 'requested resource was not found',
-    details: {},
-  })
+  throw new RemoteError('auth/not-found', 'requested resource was not found', {})
 }
 
 function namedStrings(value: unknown, names: ReadonlySet<string>, found = new Set<string>()): Set<string> {

@@ -10,6 +10,8 @@
       - img
       - text: Alpha workspace
   - text: "Upload to: Alpha workspace"
+  - button "Refresh file list":
+    - img
   - button "Upload files":
     - img
     - text: Upload files

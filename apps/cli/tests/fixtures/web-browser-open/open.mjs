@@ -22,19 +22,26 @@ export default async function open(url) {
   if (process.env.BROWSER_OPEN_TEST_FAILURE !== undefined) {
     throw new Error(process.env.BROWSER_OPEN_TEST_FAILURE)
   }
-  const exchange = await fetch(url, { redirect: 'manual' })
-  const setCookie = exchange.headers.get('set-cookie')
-  const location = exchange.headers.get('location')
-  if (exchange.status !== 303 || setCookie === null || location === null) {
-    throw new Error(`browser authentication exchange returned HTTP ${exchange.status}`)
+  const first = await fetch(url, { redirect: 'manual' })
+  const setCookie = first.headers.get('set-cookie')
+  const location = first.headers.get('location')
+  const authenticationExchange = first.status === 303
+  let response = first
+  if (authenticationExchange) {
+    if (setCookie === null || location === null) {
+      throw new Error('browser authentication exchange omitted its cookie or redirect')
+    }
+    response = await fetch(new URL(location, url), {
+      headers: { cookie: setCookie.split(';', 1)[0] },
+    })
+  } else if (first.status !== 200) {
+    throw new Error(`browser handoff returned HTTP ${first.status}`)
   }
-  const response = await fetch(new URL(location, url), {
-    headers: { cookie: setCookie.split(';', 1)[0] },
-  })
   const html = await response.text()
   console.log(`dsh browser-open: ${JSON.stringify({
     url,
     status: response.status,
+    authenticationExchange,
     bootManifest: html.includes('__DSH_BOOT__'),
     apiKeyPresent: process.env.DEEPSEEK_API_KEY !== undefined,
     dshHomePresent: process.env.DSH_HOME !== undefined,

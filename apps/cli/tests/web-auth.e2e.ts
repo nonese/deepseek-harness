@@ -410,7 +410,7 @@ describe('dsh web authentication through the real CLI', () => {
         args: { request: { address: { kind: 'session', sessionId: adminSession.sessionId } } },
       }])
       expect(foreign.get('foreign-session')).toMatchObject({
-        type: 'error', error: { code: 'not-found' },
+        type: 'error', error: { code: 'auth/not-found' },
       })
 
       const ordinarySettings = await describeSettings(port, firstUrl.host, memberCookie)
@@ -418,7 +418,7 @@ describe('dsh web authentication through the real CLI', () => {
       expect(JSON.parse(ordinarySettings.body) as unknown).toMatchObject({
         type: 'server-response',
         rpcId: 'web-auth-real-cli',
-        result: { ok: false, error: { code: 'forbidden', message: 'administrator role is required' } },
+        result: { ok: false, error: { code: 'auth/forbidden', message: 'administrator role is required' } },
       })
 
       await stopWeb(first)
@@ -428,7 +428,7 @@ describe('dsh web authentication through the real CLI', () => {
       expect(secondUrl.search).toBe('')
       expect((await describeSettings(port, secondUrl.host, cookie)).status).toBe(200)
       expect(JSON.parse((await describeSettings(port, secondUrl.host, memberCookie)).body) as unknown).toMatchObject({
-        result: { ok: false, error: { code: 'forbidden' } },
+        result: { ok: false, error: { code: 'auth/forbidden' } },
       })
 
       const credentialMode = (await stat(join(dshHome, '.credentials.yaml'))).mode & 0o777

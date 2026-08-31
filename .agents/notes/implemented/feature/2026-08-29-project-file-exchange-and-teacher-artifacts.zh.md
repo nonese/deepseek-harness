@@ -14,7 +14,7 @@ Status: implemented
 
 Office 创建是一套完整的能力 seam。`@deepseek-ai/dsh-artifacts` 定义 `ctx.documentArtifacts` 及提供方中立的 Word、演示文稿和电子表格请求。`@deepseek-ai/dsh-artifacts-local` 是所有用户共享的一个无状态宿主 Provider：每次调用接收受信的会话 workspace，在配置的项目/文本/单元格/输出限制下渲染，检查生成的 OOXML 压缩包，再原子发布到该 workspace 下。`@deepseek-ai/dsh-tool-artifacts` 拥有三个面向模型的 schema，并且只从调用 Agent 取得 `cwd`，因此模型不能选择另一名用户的根目录。
 
-本地 Provider 使用 `docx`、PptxGenJS 与 ExcelJS，而不使用 Codex 托管运行时路径。其输出词汇有意小于这些创作 skill：带样式的 Word 章节与表格、四种附讲者备注的文本优先 PowerPoint 布局，以及含公式、格式、筛选和冻结表头的 Excel 工作表。JSZip 结构检查在发布任何目标前证明必要的 OOXML 系列部件存在。现有目标要求明确设置 `overwrite: true`，即使走覆盖路径，也会在重命名前再次检查符号链接和普通文件状态。
+本地 Provider 使用 `docx`、PptxGenJS 与 ExcelJS，而不使用 Codex 托管运行时路径。其输出词汇有意小于这些创作 skill：带样式的 Word 章节与表格、四种附讲者备注的文本优先 PowerPoint 布局，以及含公式、格式、筛选和冻结表头的 Excel 工作表。Word 渲染器只在请求 Word 产物时导入 `docx`，因此 CLI 帮助和不生成 Word 的 profile 不会激活该依赖。JSZip 结构检查在发布任何目标前证明必要的 OOXML 系列部件存在。现有目标要求明确设置 `overwrite: true`，即使走覆盖路径，也会在重命名前再次检查符号链接和普通文件状态。
 
 `teacher` 是第五个随附 agent preset。它复制完整标准组装，增加文档工具 Consumer，并把 persona 替换为教学指引，覆盖受众与目标、教学流程、评价证据、差异化支持、演示文稿备注与结构化教学数据。Web 宿主只挂载一次 Provider，而[按会话 preset 机制](../architecture/2026-08-03-per-session-agent-presets.zh.md)只向选择教师模式的会话授予工具和提示词。其他四种随附 preset 保持原有模型可见目录。
 

@@ -33,7 +33,7 @@ Mount this plugin in the browser roster of a Harness deployment, then build the 
 
 ### Replacing the brand
 
-A deployment with its own identity leaves this package out and composes another package that occupies the same three slots. Occupying a slot is the only composition route; there is no brand configuration surface here.
+A deployment with its own identity leaves this package out and composes another package that occupies the sidebar and hero slots. Occupying a slot is the only composition route; there is no brand configuration surface here.
 
 -----
 
@@ -43,7 +43,7 @@ A deployment with its own identity leaves this package out and composes another 
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-The three occupants install as one declaration-aware registration set: nested `ctx.slots.inject()` calls wait on the sidebar and conversation declarations, so the set works whether this row activates before or after the declarers, withdraws all three occupants when either declaration collapses, and leaves no partial brand mix during HMR. The browser half is [`src/client/index.ts`](src/client/index.ts); the node half is an empty Loader seat. The browser title is a build-environment concern (`DSH_CLIENT_TITLE`), outside the slot system.
+The three occupants install as one declaration-aware registration set: nested `ctx.slots.inject()` calls wait on every declaration, so the set works whether this row activates before or after the declarers, withdraws all occupants when a declaration collapses, and leaves no partial brand mix during HMR. The browser half is [`src/client/index.ts`](src/client/index.ts); the node half is an empty Loader seat. The browser title is a build-environment concern (`DSH_CLIENT_TITLE`), outside the slot system.
 
 </details>
 
