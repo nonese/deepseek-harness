@@ -16,7 +16,7 @@ Status: implemented
 
 `desktop` profile 组合普通 base 和 Web bundle，再应用 `@deepseek-ai/dsh-desktop-app`，获得 CurrentUser DPAPI 凭据、单进程回环认证和完全本地权限默认值。它包含 Product Design，并把 `dsh-browser-playwright@0.1.1` 固定为进程全局 profile bundle。桌面层用仅限回环的提供方替换服务器 Web 启动提供方，该提供方不等待多用户认证服务；普通 Connection 进程 token 只允许已启动的嵌入式 Web 视图进入。现有 Dreamina CLI 未针对 Windows 打包，因此启动器设置 `DSH_DISABLE_DREAMINA=1`；启动器只使用随附 `node.exe` 运行暂存的 `lib/bin.js --profile desktop`。
 
-`.github/workflows/windows-desktop.yml` 在用户自己的 fork 中使用 Windows x64 runner 构建。CLI 应用 manifest 显式声明其生产包闭包能够到达的所有运行时 peer provider；模块回退遍历会先沿每个 pnpm 链接进入包的物理目录，再解析其隔离依赖。工作流把已构建 workspace 包注入生产运行时，验证浏览器插件版本，通过复制的 `node.exe` 启动暂存运行时，并请求其已认证回环地址对应的页面。hoisted deploy 会在独立目录中实体化桌面包及其开发依赖，使 Electron Forge 遍历实际依赖目录而不是 workspace 链接。Forge 生成未签名的 Squirrel `FZFX-DSH-Setup.exe`，工作流同时发布校验和与构建清单。手动触发会上传 artifact；`desktop-v*` 标签还可以创建 GitHub Release。安装包通过仓库 Actions 变量固定服务器 origin 与服务器公开签名 JWK；这两项都不是秘密。
+`.github/workflows/windows-desktop.yml` 在用户自己的 fork 中使用 Windows x64 runner 构建。CLI 应用 manifest 显式声明其生产包闭包能够到达的所有运行时 peer provider；模块回退遍历会先沿每个 pnpm 链接进入包的物理目录，再解析其隔离依赖。工作流把已构建 workspace 包注入 hoisted 生产运行时，验证浏览器插件版本，通过复制的 `node.exe` 启动暂存运行时，并请求其已认证回环地址对应的页面。第二次 hoisted deploy 会在短暂存目录中实体化桌面包及其开发依赖，使 Electron Forge 遍历实际依赖目录而不是 workspace 链接。两棵依赖树都采用 hoisted 布局还能避免 pnpm 虚拟存储路径超过 Squirrel 的 NuGet 打包器所执行的路径限制。Forge 生成未签名的 Squirrel `FZFX-DSH-Setup.exe`，工作流同时发布校验和与构建清单。手动触发会上传 artifact；`desktop-v*` 标签还可以创建 GitHub Release。安装包通过仓库 Actions 变量固定服务器 origin 与服务器公开签名 JWK；这两项都不是秘密。
 
 ## 设备授权
 

@@ -24,7 +24,9 @@ $config | ConvertTo-Json -Depth 12 | Set-Content -Path $configPath -Encoding utf
 if (Test-Path $runtimeDir) {
   Remove-Item -LiteralPath $runtimeDir -Recurse -Force
 }
-pnpm --config.inject-workspace-packages=true --ignore-scripts --filter '@deepseek-ai/dsh' --prod deploy $runtimeDir
+# Squirrel's NuGet packer still enforces MAX_PATH. A hoisted runtime avoids the
+# long pnpm virtual-store paths that would otherwise be copied into resources/.
+pnpm --config.node-linker=hoisted --config.inject-workspace-packages=true --ignore-scripts --filter '@deepseek-ai/dsh' --prod deploy $runtimeDir
 if ($LASTEXITCODE -ne 0) { throw 'pnpm deploy failed' }
 
 $nodeExe = (Get-Command node.exe).Source
@@ -132,7 +134,7 @@ try {
   Pop-Location
 }
 
-$packageStage = Join-Path $env:RUNNER_TEMP 'dsh-desktop-package-stage'
+$packageStage = Join-Path $env:RUNNER_TEMP 'd'
 if (Test-Path $packageStage) {
   Remove-Item -LiteralPath $packageStage -Recurse -Force
 }

@@ -55,7 +55,7 @@ describe('CI workflow', () => {
     }
   })
 
-  it('packages the Windows desktop from an isolated hoisted dependency tree', () => {
+  it('packages the Windows desktop from short isolated hoisted dependency trees', () => {
     const workflow = loadWorkflow('.github/workflows/windows-desktop.yml')
     const build = workflowJob(workflow, 'build')
     if (!Array.isArray(build.steps)) throw new TypeError('Windows desktop build must define steps')
@@ -68,12 +68,15 @@ describe('CI workflow', () => {
     expect(commands).not.toContain('pnpm config set node-linker')
 
     const script = readFileSync(resolve(root, '.github/scripts/build-windows-desktop.ps1'), 'utf8')
-    const stageIndex = script.indexOf('--config.node-linker=hoisted')
+    const hoistedDeploys = script.match(/--config\.node-linker=hoisted/g) ?? []
+    const stageIndex = script.lastIndexOf('--config.node-linker=hoisted')
     const runtimeCopyIndex = script.indexOf('Copy-Item -LiteralPath $runtimeDir')
     const forgeIndex = script.indexOf('node_modules/@electron-forge/cli/dist/electron-forge.js')
     const publishIndex = script.indexOf('$desktopOut = Join-Path $desktopDir \'out\'')
 
+    expect(hoistedDeploys).toHaveLength(2)
     expect(stageIndex).toBeGreaterThan(-1)
+    expect(script).toContain("$packageStage = Join-Path $env:RUNNER_TEMP 'd'")
     expect(script).toContain('$env:PNPM_CONFIG_NODE_LINKER = \'hoisted\'')
     expect(script).not.toContain('deploy --legacy')
     expect(runtimeCopyIndex).toBeGreaterThan(stageIndex)
