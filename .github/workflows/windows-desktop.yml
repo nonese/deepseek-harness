@@ -31,7 +31,9 @@ jobs:
           cache: pnpm
 
       - name: Configure Electron Forge dependency layout
-        run: pnpm config set node-linker hoisted --location project
+        run: |
+          pnpm config set node-linker hoisted --location project
+          pnpm config set public-hoist-pattern '*' --location project
 
       - name: Install reviewed dependencies
         run: pnpm install --frozen-lockfile
