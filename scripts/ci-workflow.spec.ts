@@ -71,6 +71,7 @@ describe('CI workflow', () => {
     const hoistedDeploys = script.match(/--config\.node-linker=hoisted/g) ?? []
     const stageIndex = script.lastIndexOf('--config.node-linker=hoisted')
     const runtimeCopyIndex = script.indexOf('Copy-Item -LiteralPath $runtimeDir')
+    const squirrelSevenZipIndex = script.indexOf("Join-Path $squirrelVendor '7z.exe'")
     const forgeIndex = script.indexOf('node_modules/@electron-forge/cli/dist/electron-forge.js')
     const publishIndex = script.indexOf('$desktopOut = Join-Path $desktopDir \'out\'')
 
@@ -80,6 +81,10 @@ describe('CI workflow', () => {
     expect(script).toContain('$env:PNPM_CONFIG_NODE_LINKER = \'hoisted\'')
     expect(script).not.toContain('deploy --legacy')
     expect(runtimeCopyIndex).toBeGreaterThan(stageIndex)
+    expect(script).toContain("Join-Path $squirrelVendor '7z-x64.exe'")
+    expect(script).toContain("Join-Path $squirrelVendor '7z-x64.dll'")
+    expect(squirrelSevenZipIndex).toBeGreaterThan(runtimeCopyIndex)
+    expect(forgeIndex).toBeGreaterThan(squirrelSevenZipIndex)
     expect(forgeIndex).toBeGreaterThan(runtimeCopyIndex)
     expect(publishIndex).toBeGreaterThan(forgeIndex)
   })

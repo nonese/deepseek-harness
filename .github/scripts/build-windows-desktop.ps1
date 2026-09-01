@@ -150,6 +150,19 @@ try {
 Copy-Item -LiteralPath $runtimeDir -Destination (Join-Path $packageStage 'runtime') -Recurse
 Copy-Item -LiteralPath $configPath -Destination (Join-Path $packageStage 'desktop.config.json')
 
+# The isolated deploy skips dependency install scripts. electron-winstaller's
+# install script normally selects the host-architecture 7-Zip files that
+# Squirrel invokes while creating the release package, so materialize that
+# deterministic x64 selection before Forge runs.
+$squirrelVendor = Join-Path $packageStage 'node_modules/electron-winstaller/vendor'
+$sevenZipSource = Join-Path $squirrelVendor '7z-x64.exe'
+$sevenZipDllSource = Join-Path $squirrelVendor '7z-x64.dll'
+if (-not (Test-Path $sevenZipSource) -or -not (Test-Path $sevenZipDllSource)) {
+  throw 'electron-winstaller does not contain the x64 7-Zip binaries'
+}
+Copy-Item -LiteralPath $sevenZipSource -Destination (Join-Path $squirrelVendor '7z.exe')
+Copy-Item -LiteralPath $sevenZipDllSource -Destination (Join-Path $squirrelVendor '7z.dll')
+
 $previousNpmUserAgent = $env:npm_config_user_agent
 $previousPnpmNodeLinker = $env:PNPM_CONFIG_NODE_LINKER
 $pnpmVersion = (& pnpm --version).Trim()
