@@ -27,7 +27,7 @@ kind: "package-reference"
 
 ### 路由
 
-`GET /auth/session`、`POST /auth/login/local`、`GET /auth/oidc/start`、`GET /auth/oidc/callback` 与 `POST /auth/logout` 管理浏览器会话。OIDC 使用 Authorization Code、PKCE S256、state、nonce、提供方发现，以及通过轮换 JWKS 完成的签名 ID Token 验证。待完成流程只保存在进程内存中，生命周期为十分钟，并绑定一个匹配的 `HttpOnly`、`SameSite=Lax` 临时 Cookie；回调重放不能再次签发会话。若提供方的授权码 token 端点随有效 token 响应返回 HTTP 201，则可启用 `oidcTokenEndpointCreatedCompatibility`；其默认值 `false` 保留标准的 HTTP 200 要求。已认证用户只能列出并创建自己生成数据根目录下的项目。`GET /auth/projects/:id/files` 列出一个项目相对目录，`/preview` 返回大小受限的 UTF-8 文本，`/download` 以附件方式流式传输一个普通文件，`PUT /upload` 则把一个文件流式写入所选目录且不替换同名文件。每条文件路由都只会在当前已认证用户的受管 workspace 中解析项目 ID，拒绝路径越界和符号链接，并省略隐藏条目。`GET` 与 `PATCH /auth/preferences` 只公开和修改当前用户是否启用全部管理员统一模型站点；所有站点都没有配置凭据时，启用操作会失败。
+`GET /auth/session`、`POST /auth/login/local`、`GET /auth/oidc/start`、`GET /auth/oidc/callback` 与 `POST /auth/logout` 管理浏览器会话。OIDC 使用 Authorization Code、PKCE S256、state、nonce、提供方发现，以及通过轮换 JWKS 完成的签名 ID Token 验证。`client_secret_basic` 令牌请求会将密钥保留在 Authorization 标头中，同时在表单正文发送公开的 client id，以兼容通过该字段绑定授权码的提供方。待完成流程只保存在进程内存中，生命周期为十分钟，并绑定一个匹配的 `HttpOnly`、`SameSite=Lax` 临时 Cookie；回调重放不能再次签发会话。若提供方的授权码 token 端点随有效 token 响应返回 HTTP 201，则可启用 `oidcTokenEndpointCreatedCompatibility`；其默认值 `false` 保留标准的 HTTP 200 要求。已认证用户只能列出并创建自己生成数据根目录下的项目。`GET /auth/projects/:id/files` 列出一个项目相对目录，`/preview` 返回大小受限的 UTF-8 文本，`/download` 以附件方式流式传输一个普通文件，`PUT /upload` 则把一个文件流式写入所选目录且不替换同名文件。每条文件路由都只会在当前已认证用户的受管 workspace 中解析项目 ID，拒绝路径越界和符号链接，并省略隐藏条目。`GET` 与 `PATCH /auth/preferences` 只公开和修改当前用户是否启用全部管理员统一模型站点；所有站点都没有配置凭据时，启用操作会失败。
 
 `projectFileMaxEntries` 限制单次目录响应，默认为 1,000 个可见条目。`projectFilePreviewMaxBytes` 限制单次文本预览，默认为 512 KiB。`projectFileUploadMaxBytes` 限制单文件流式上传，默认为 50 MiB；下载和上传都保持流式传输，不会整体缓冲到应用内存。
 

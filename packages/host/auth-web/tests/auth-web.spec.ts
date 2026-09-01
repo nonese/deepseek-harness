@@ -57,6 +57,7 @@ async function startOidcProvider(): Promise<{
   setClientAuthMethod(method: 'client_secret_basic' | 'client_secret_post'): void
   setClaims(claims: Readonly<Record<string, unknown>>): void
   setTokenSuccessStatus(status: number): void
+  requireBasicClientIdInBody(): void
   setSupportsPkce(value: boolean | undefined): void
 }> {
   const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
@@ -67,6 +68,7 @@ async function startOidcProvider(): Promise<{
   let supportsPkce: boolean | undefined = true
   let tokenSuccessStatus = 200
   let clientAuthMethod: 'client_secret_basic' | 'client_secret_post' = 'client_secret_basic'
+  let basicClientIdInBodyRequired = false
   let customClaims: Readonly<Record<string, unknown>> = {
     sub: 'oidc-user-1',
     preferred_username: 'external.user',
@@ -116,7 +118,9 @@ async function startOidcProvider(): Promise<{
         ? credentials === 'harness-client:harness-secret'
         : body.get('client_id') === 'harness-client' && body.get('client_secret') === 'harness-secret'
       if (body.get('code') !== 'valid-code' || challenge !== expectedChallenge
-        || !clientAuthenticated) {
+        || !clientAuthenticated
+        || (clientAuthMethod === 'client_secret_basic' && basicClientIdInBodyRequired
+          && (body.get('client_id') !== 'harness-client' || body.has('client_secret')))) {
         const failure = JSON.stringify({
           error: 'invalid_grant',
           error_description: JSON.stringify({
@@ -176,6 +180,9 @@ async function startOidcProvider(): Promise<{
     },
     setTokenSuccessStatus(status) {
       tokenSuccessStatus = status
+    },
+    requireBasicClientIdInBody() {
+      basicClientIdInBodyRequired = true
     },
     setSupportsPkce(value) {
       supportsPkce = value
@@ -1088,6 +1095,36 @@ describe('real authentication route composition', () => {
     })
     expect(context.auth.listUsers()).toHaveLength(2)
     expect((await fetch(`${origin}/auth/system`, { headers: { cookie: oidcSessionCookie } })).status).toBe(403)
+
+    provider.setClientAuthMethod('client_secret_basic')
+    provider.setTokenSuccessStatus(200)
+    provider.requireBasicClientIdInBody()
+    expect((await fetch(`${origin}/auth/system/oidc`, {
+      method: 'PUT',
+      headers: { cookie: adminCookie, origin, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        enabled: true,
+        issuer: provider.issuer,
+        clientId: 'harness-client',
+        clientSecret: 'harness-secret',
+        redirectUri: `${origin}/auth/oidc/callback`,
+        scopes: ['openid', 'profile', 'email', 'groups'],
+        clientAuthMethod: 'client_secret_basic',
+        allowInsecureIssuer: true,
+        administratorGroup: 'super_admin',
+      }),
+    })).status).toBe(200)
+    const basicStart = await fetch(`${origin}/auth/oidc/start`, { redirect: 'manual' })
+    const basicAuthorization = new URL(basicStart.headers.get('location') as string)
+    provider.captureAuthorization(basicAuthorization)
+    const basicState = basicAuthorization.searchParams.get('state')
+    const basicCookie = basicStart.headers.get('set-cookie')?.split(';', 1)[0]
+    if (basicState === null || basicCookie === undefined) throw new Error('Basic OIDC flow state missing')
+    const basicCallback = await fetch(
+      `${origin}/auth/oidc/callback?code=valid-code&state=${encodeURIComponent(basicState)}`,
+      { headers: { cookie: basicCookie }, redirect: 'manual' },
+    )
+    expect(basicCallback.headers.get('location')).toBe(`${origin}/`)
 
     provider.setTokenSuccessStatus(202)
     const unsupportedStart = await fetch(`${origin}/auth/oidc/start`, { redirect: 'manual' })
