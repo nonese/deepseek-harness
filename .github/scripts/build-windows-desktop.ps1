@@ -90,7 +90,7 @@ try {
   $authenticatedUrl = $null
   while ([DateTime]::UtcNow -lt $deadline) {
     if (Test-Path $runtimeSmokeStdout) {
-      $runtimeOutput = Get-Content -LiteralPath $runtimeSmokeStdout -Raw
+      $runtimeOutput = [string](Get-Content -LiteralPath $runtimeSmokeStdout -Raw)
       $match = [regex]::Match($runtimeOutput, 'dsh web: (http://127\.0\.0\.1:\d+/\?token=[A-Za-z0-9_-]+)')
       if ($match.Success) {
         $authenticatedUrl = $match.Groups[1].Value
