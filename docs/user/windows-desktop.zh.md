@@ -11,7 +11,7 @@
 - `DSH_DESKTOP_SERVER_SIGNING_PUBLIC_JWK`：服务器返回的完整公开 JWK JSON，必填。
 - `DSH_DESKTOP_SERVER_ORIGIN`：服务器 origin，可选；默认是 `http://10.155.44.246:3081`。
 
-手动运行 `Windows desktop installer` 工作流即可构建。推送 `desktop-v*` 标签会执行相同构建并发布 GitHub Release。工作流会安装已审核依赖、构建仓库、运行桌面协议与服务器测试、注入 workspace 包并暂存生产运行时、验证浏览器插件版本为 `0.1.1`，再通过随附 Node 可执行文件启动该暂存运行时，用其一次性回环地址换取 Web 页面，最后由 Electron Forge 生成 `FZFX-DSH-Setup.exe`。产物还包含 SHA-256 文件和构建清单。
+手动运行 `Windows desktop installer` 工作流即可构建。推送 `desktop-v*` 标签会执行相同构建并发布 GitHub Release。工作流会安装已审核依赖、构建仓库、运行桌面协议与服务器测试、注入 workspace 包并暂存生产运行时、验证浏览器插件版本为 `0.1.1`，再通过随附 Node 可执行文件启动该暂存运行时，用其一次性回环地址换取 Web 页面，为桌面包生成独立依赖树，最后由 Electron Forge 生成 `FZFX-DSH-Setup.exe`。产物还包含 SHA-256 文件和构建清单。
 
 试运行版本尚未签名，因此 Windows SmartScreen 可能发出警告。安装前应校验 SHA-256。CI 构建成功不能作为 Windows 运行验收结论；启动、OIDC 激活、DPAPI 持久化、模型同步、浏览器插件启动、Office 文件上传和卸载行为仍须按计划执行 Windows 实机验证。
 

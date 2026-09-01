@@ -128,16 +128,48 @@ Push-Location $desktopDir
 try {
   pnpm run build
   if ($LASTEXITCODE -ne 0) { throw 'desktop TypeScript build failed' }
-  pnpm run make
-  if ($LASTEXITCODE -ne 0) { throw 'Electron Forge make failed' }
 } finally {
   Pop-Location
 }
 
-$setup = Join-Path $desktopDir 'out/make/squirrel.windows/x64/FZFX-DSH-Setup.exe'
-if (-not (Test-Path $setup)) { throw "installer is missing at $setup" }
-$digest = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant()
-"$digest  FZFX-DSH-Setup.exe" | Set-Content -Path "$setup.sha256" -Encoding ascii
+$packageStage = Join-Path $env:RUNNER_TEMP 'dsh-desktop-package-stage'
+if (Test-Path $packageStage) {
+  Remove-Item -LiteralPath $packageStage -Recurse -Force
+}
+# Forge's dependency walker requires a self-contained tree instead of pnpm workspace links.
+Push-Location $repoRoot
+try {
+  pnpm --config.node-linker=hoisted --config.inject-workspace-packages=true --ignore-scripts --filter '@deepseek-ai/dsh-desktop' deploy $packageStage
+  if ($LASTEXITCODE -ne 0) { throw 'desktop package staging failed' }
+} finally {
+  Pop-Location
+}
+
+Copy-Item -LiteralPath $runtimeDir -Destination (Join-Path $packageStage 'runtime') -Recurse
+Copy-Item -LiteralPath $configPath -Destination (Join-Path $packageStage 'desktop.config.json')
+
+$previousNpmUserAgent = $env:npm_config_user_agent
+$previousPnpmNodeLinker = $env:PNPM_CONFIG_NODE_LINKER
+$pnpmVersion = (& pnpm --version).Trim()
+$nodeVersion = (& node --version).Trim()
+$env:npm_config_user_agent = "pnpm/$pnpmVersion node/$nodeVersion"
+$env:PNPM_CONFIG_NODE_LINKER = 'hoisted'
+Push-Location $packageStage
+try {
+  & node (Join-Path $packageStage 'node_modules/@electron-forge/cli/dist/electron-forge.js') make --platform win32 --arch x64 --config forge.config.cjs
+  if ($LASTEXITCODE -ne 0) { throw 'Electron Forge make failed' }
+} finally {
+  Pop-Location
+  if ($null -eq $previousNpmUserAgent) { Remove-Item Env:npm_config_user_agent -ErrorAction SilentlyContinue }
+  else { $env:npm_config_user_agent = $previousNpmUserAgent }
+  if ($null -eq $previousPnpmNodeLinker) { Remove-Item Env:PNPM_CONFIG_NODE_LINKER -ErrorAction SilentlyContinue }
+  else { $env:PNPM_CONFIG_NODE_LINKER = $previousPnpmNodeLinker }
+}
+
+$stageSetup = Join-Path $packageStage 'out/make/squirrel.windows/x64/FZFX-DSH-Setup.exe'
+if (-not (Test-Path $stageSetup)) { throw "installer is missing at $stageSetup" }
+$digest = (Get-FileHash -LiteralPath $stageSetup -Algorithm SHA256).Hash.ToLowerInvariant()
+"$digest  FZFX-DSH-Setup.exe" | Set-Content -Path "$stageSetup.sha256" -Encoding ascii
 $manifest = [ordered]@{
   product = '奉中附小 DSH'
   version = (Get-Content (Join-Path $desktopDir 'package.json') -Raw | ConvertFrom-Json).version
@@ -150,4 +182,15 @@ $manifest = [ordered]@{
   signed = $false
   hardwareAcceptance = $false
 }
-$manifest | ConvertTo-Json -Depth 6 | Set-Content -Path (Join-Path (Split-Path $setup) 'build-manifest.json') -Encoding utf8NoBOM
+$stageManifest = Join-Path (Split-Path $stageSetup) 'build-manifest.json'
+$manifest | ConvertTo-Json -Depth 6 | Set-Content -Path $stageManifest -Encoding utf8NoBOM
+
+$desktopOut = Join-Path $desktopDir 'out'
+if (Test-Path $desktopOut) {
+  Remove-Item -LiteralPath $desktopOut -Recurse -Force
+}
+$finalMakeDir = Join-Path $desktopOut 'make/squirrel.windows/x64'
+New-Item -ItemType Directory -Path $finalMakeDir -Force | Out-Null
+Copy-Item -LiteralPath $stageSetup -Destination (Join-Path $finalMakeDir 'FZFX-DSH-Setup.exe')
+Copy-Item -LiteralPath "$stageSetup.sha256" -Destination (Join-Path $finalMakeDir 'FZFX-DSH-Setup.exe.sha256')
+Copy-Item -LiteralPath $stageManifest -Destination (Join-Path $finalMakeDir 'build-manifest.json')

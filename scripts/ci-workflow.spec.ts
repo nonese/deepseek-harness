@@ -55,6 +55,32 @@ describe('CI workflow', () => {
     }
   })
 
+  it('packages the Windows desktop from an isolated hoisted dependency tree', () => {
+    const workflow = loadWorkflow('.github/workflows/windows-desktop.yml')
+    const build = workflowJob(workflow, 'build')
+    if (!Array.isArray(build.steps)) throw new TypeError('Windows desktop build must define steps')
+    const commands = build.steps
+      .filter((step): step is Record<string, unknown> & { run: string } => (
+        isRecord(step) && typeof step.run === 'string'
+      ))
+      .map(step => step.run)
+      .join('\n')
+    expect(commands).not.toContain('pnpm config set node-linker')
+
+    const script = readFileSync(resolve(root, '.github/scripts/build-windows-desktop.ps1'), 'utf8')
+    const stageIndex = script.indexOf('--config.node-linker=hoisted')
+    const runtimeCopyIndex = script.indexOf('Copy-Item -LiteralPath $runtimeDir')
+    const forgeIndex = script.indexOf('node_modules/@electron-forge/cli/dist/electron-forge.js')
+    const publishIndex = script.indexOf('$desktopOut = Join-Path $desktopDir \'out\'')
+
+    expect(stageIndex).toBeGreaterThan(-1)
+    expect(script).toContain('$env:PNPM_CONFIG_NODE_LINKER = \'hoisted\'')
+    expect(script).not.toContain('deploy --legacy')
+    expect(runtimeCopyIndex).toBeGreaterThan(stageIndex)
+    expect(forgeIndex).toBeGreaterThan(runtimeCopyIndex)
+    expect(publishIndex).toBeGreaterThan(forgeIndex)
+  })
+
   it('keeps required Wine and split native Windows jobs with failover, plus a master-only standby', () => {
     const workflow = loadWorkflow('.github/workflows/ci.yml')
     const masterWorkflow = loadWorkflow('.github/workflows/ci-master.yml')
