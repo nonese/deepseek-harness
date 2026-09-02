@@ -14,9 +14,9 @@ Status: implemented
 
 ## 发行与启动
 
-`desktop` profile 组合普通 base 和 Web bundle，再应用 `@deepseek-ai/dsh-desktop-app`，获得 CurrentUser DPAPI 凭据、单进程回环认证和完全本地权限默认值。它包含 Product Design，并把 `dsh-browser-playwright@0.1.1` 固定为进程全局 profile bundle。桌面层用仅限回环的提供方替换服务器 Web 启动提供方，该提供方不等待多用户认证服务；普通 Connection 进程 token 只允许已启动的嵌入式 Web 视图进入。现有 Dreamina CLI 未针对 Windows 打包，因此启动器设置 `DSH_DISABLE_DREAMINA=1`；启动器只使用随附 `node.exe` 运行暂存的 `lib/bin.js --profile desktop`。
+`desktop` profile 组合普通 base 和 Web bundle，再应用 `@deepseek-ai/dsh-desktop-app`，获得 CurrentUser DPAPI 凭据、单进程回环认证和完全本地权限默认值。它包含 Product Design，并把 `dsh-browser-playwright@0.1.1` 固定为进程全局 profile bundle。桌面层用仅限回环的提供方替换服务器 Web 启动提供方，该提供方不等待多用户认证服务；普通 Connection 进程 token 只允许已启动的嵌入式 Web 视图进入。现有 Dreamina CLI 未针对 Windows 打包，因此启动器设置 `DSH_DISABLE_DREAMINA=1`；启动器只使用随附 `node.exe` 运行暂存的 `lib/bin.js --profile desktop`。Squirrel 生命周期参数会在普通 Electron 初始化前处理，因此安装、更新、卸载和旧进程调用都不能启动随附运行时。普通启动会禁用硬件加速，并要求用户在激活或授权刷新后主动选择本地运行时操作；`--safe-mode` 只加载外壳，跳过服务器与运行时启动。外壳会在 Electron 用户数据目录下记录大小受限且经过凭据脱敏的启动与子进程事件，并在等待 DSH 关闭时使用 Windows 整棵进程树终止机制。
 
-`.github/workflows/windows-desktop.yml` 在用户自己的 fork 中使用 Windows x64 runner 构建。CLI 应用 manifest 显式声明其生产包闭包能够到达的所有运行时 peer provider；模块回退遍历会先沿每个 pnpm 链接进入包的物理目录，再解析其隔离依赖。工作流把已构建 workspace 包注入 hoisted 生产运行时，验证浏览器插件版本，通过复制的 `node.exe` 启动暂存运行时，并请求其已认证回环地址对应的页面。第二次 hoisted deploy 会在短暂存目录中实体化桌面包及其开发依赖，使 Electron Forge 遍历实际依赖目录而不是 workspace 链接。两棵依赖树都采用 hoisted 布局还能避免 pnpm 虚拟存储路径超过 Squirrel 的 NuGet 打包器所执行的路径限制。两次 deploy 都会跳过依赖安装脚本，因此打包脚本会在调用 Squirrel 前选择 electron-winstaller 的 x64 版 7-Zip 可执行文件和动态库。Forge 生成未签名的 Squirrel `FZFX-DSH-Setup.exe`，工作流同时发布校验和与构建清单。手动触发会上传 artifact；`desktop-v*` 标签还可以创建 GitHub Release。安装包通过仓库 Actions 变量固定服务器 origin 与服务器公开签名 JWK；这两项都不是秘密。
+`.github/workflows/windows-desktop.yml` 在用户自己的 fork 中使用 Windows x64 runner 构建。CLI 应用 manifest 显式声明其生产包闭包能够到达的所有运行时 peer provider；模块回退遍历会先沿每个 pnpm 链接进入包的物理目录，再解析其隔离依赖。工作流把已构建 workspace 包注入 hoisted 生产运行时，验证浏览器插件版本，通过复制的 `node.exe` 启动暂存运行时，并请求其已认证回环地址对应的页面。第二次 hoisted deploy 会在短暂存目录中实体化桌面包及其开发依赖，使 Electron Forge 遍历实际依赖目录而不是 workspace 链接。两棵依赖树都采用 hoisted 布局还能避免 pnpm 虚拟存储路径超过 Squirrel 的 NuGet 打包器所执行的路径限制。两次 deploy 都会跳过依赖安装脚本，因此打包脚本会在调用 Squirrel 前选择 electron-winstaller 的 x64 版 7-Zip 可执行文件和动态库。Forge 生成未签名的 Squirrel `FZFX-DSH-Setup.exe`；Windows runner 随后使用 Squirrel 的旧进程参数调用已打包的可执行文件，并在退出码非零或运行超过 5 秒时拒绝产物。工作流同时发布安装包、校验和与构建清单。手动触发会上传 artifact；`desktop-v*` 标签还可以创建 GitHub Release。安装包通过仓库 Actions 变量固定服务器 origin 与服务器公开签名 JWK；这两项都不是秘密。
 
 ## 设备授权
 
@@ -46,4 +46,4 @@ Status: implemented
 
 试运行版本能生成自包含 Windows 安装包，并让本地 Harness 架构继续使用受支持的 profile 入口。它复用服务器 OIDC 身份，保留服务器基于文件的存储方式，为管理员提供有界设备撤销，并在静态存储中分离组织模型凭据和个人模型凭据。
 
-安装包比 WebView 外壳更大，并且因为未签名可能触发 Windows SmartScreen。已撤销的离线设备仍可使用到当前授权到期。DPAPI 保护静态凭据，但无法对已授权 Windows 账号隐藏本机可用的 Key。GitHub Actions 必须先取得已部署服务器的公开签名 JWK，才能构建可用安装包。CI 构建可证明暂存的 Windows 运行时能够加载完整桌面 profile、初始化 DPAPI 凭据，并提供通过进程 token 认证的页面。它不能证明实机验收已经完成；安装、OIDC 激活、跨 Windows 登录持久化、浏览器自动化、Office 上传、模型使用、离线行为、升级和卸载，都要等暂缓的 Windows 实机测试后才能确认。
+安装包比 WebView 外壳更大，并且因为未签名可能触发 Windows SmartScreen。已撤销的离线设备仍可使用到当前授权到期。DPAPI 保护静态凭据，但无法对已授权 Windows 账号隐藏本机可用的 Key。GitHub Actions 必须先取得已部署服务器的公开签名 JWK，才能构建可用安装包。CI 构建可证明暂存的 Windows 运行时能够加载完整桌面 profile、初始化 DPAPI 凭据，并提供通过进程 token 认证的页面。已打包的 Squirrel 探针只能证明安装器生命周期进程会及时退出；启动诊断与安全模式用于后续故障分类。CI 不能证明实机验收已经完成；安装、OIDC 激活、跨 Windows 登录持久化、浏览器自动化、Office 上传、模型使用、离线行为、升级和卸载，都要等暂缓的 Windows 实机测试后才能确认。

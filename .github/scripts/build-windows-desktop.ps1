@@ -181,6 +181,24 @@ try {
   else { $env:PNPM_CONFIG_NODE_LINKER = $previousPnpmNodeLinker }
 }
 
+$packagedExe = Join-Path $packageStage 'out/FZFX-DSH-win32-x64/FZFX-DSH.exe'
+if (-not (Test-Path $packagedExe)) { throw "packaged desktop executable is missing at $packagedExe" }
+$squirrelProbe = $null
+try {
+  $squirrelProbe = Start-Process -FilePath $packagedExe -ArgumentList '--squirrel-obsolete' -PassThru
+  if (-not $squirrelProbe.WaitForExit(5_000)) {
+    throw 'packaged desktop did not exit promptly for --squirrel-obsolete'
+  }
+  if ($squirrelProbe.ExitCode -ne 0) {
+    throw "packaged desktop Squirrel lifecycle probe exited with $($squirrelProbe.ExitCode)"
+  }
+} finally {
+  if ($null -ne $squirrelProbe -and -not $squirrelProbe.HasExited) {
+    Stop-Process -Id $squirrelProbe.Id -Force
+    $squirrelProbe.WaitForExit()
+  }
+}
+
 $stageSetup = Join-Path $packageStage 'out/make/squirrel.windows/x64/FZFX-DSH-Setup.exe'
 if (-not (Test-Path $stageSetup)) { throw "installer is missing at $stageSetup" }
 $digest = (Get-FileHash -LiteralPath $stageSetup -Algorithm SHA256).Hash.ToLowerInvariant()

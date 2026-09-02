@@ -73,6 +73,7 @@ describe('CI workflow', () => {
     const runtimeCopyIndex = script.indexOf('Copy-Item -LiteralPath $runtimeDir')
     const squirrelSevenZipIndex = script.indexOf("Join-Path $squirrelVendor '7z.exe'")
     const forgeIndex = script.indexOf('node_modules/@electron-forge/cli/dist/electron-forge.js')
+    const squirrelProbeIndex = script.indexOf("-ArgumentList '--squirrel-obsolete'")
     const publishIndex = script.indexOf('$desktopOut = Join-Path $desktopDir \'out\'')
 
     expect(hoistedDeploys).toHaveLength(2)
@@ -86,6 +87,9 @@ describe('CI workflow', () => {
     expect(squirrelSevenZipIndex).toBeGreaterThan(runtimeCopyIndex)
     expect(forgeIndex).toBeGreaterThan(squirrelSevenZipIndex)
     expect(forgeIndex).toBeGreaterThan(runtimeCopyIndex)
+    expect(squirrelProbeIndex).toBeGreaterThan(forgeIndex)
+    expect(script).toContain('$squirrelProbe.WaitForExit(5_000)')
+    expect(publishIndex).toBeGreaterThan(squirrelProbeIndex)
     expect(publishIndex).toBeGreaterThan(forgeIndex)
   })
 

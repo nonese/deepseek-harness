@@ -15,17 +15,23 @@
     <h1>连接你的工作空间</h1>
     <p>使用单位统一身份认证激活当前 Windows 设备。激活成功后，本地 DSH 可离线使用 30 天，并自动同步管理员提供的模型。</p>
     <div id="status" class="status">正在检查设备授权…</div>
-    <button id="activate" type="button">使用单位账号登录</button>
+    <button id="activate" type="button" disabled>使用单位账号登录</button>
+    <button id="launch" type="button" hidden>启动本地 DSH</button>
     <div class="note">个人项目和会话只保存在这台电脑；单位模型密钥由 Windows DPAPI 加密。</div>
   </main>
   <script>
     const status = document.querySelector('#status')
-    const button = document.querySelector('#activate')
-    button.addEventListener('click', () => window.desktop.activate())
+    const activate = document.querySelector('#activate')
+    const launch = document.querySelector('#launch')
+    activate.addEventListener('click', () => window.desktop.activate())
+    launch.addEventListener('click', () => window.desktop.launch())
     window.desktop.onStatus(next => {
       status.textContent = next.message
       status.className = `status ${next.kind}`
-      button.disabled = next.kind === 'busy'
+      activate.hidden = next.action !== 'activate'
+      launch.hidden = next.action !== 'launch'
+      activate.disabled = next.kind === 'busy'
+      launch.disabled = next.kind === 'busy'
     })
   </script>
 </body>

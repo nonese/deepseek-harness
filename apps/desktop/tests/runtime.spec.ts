@@ -22,6 +22,9 @@ import {
   organizationCredentialRef,
   parseDshWebUrl,
 } from '../src/runtime.ts'
+import { createDesktopStartupLogger, redactDesktopDiagnostic } from '../src/diagnostics.ts'
+import { windowsProcessTreeArguments } from '../src/process-tree.ts'
+import { resolveSquirrelLifecycle } from '../src/squirrel.ts'
 
 const protector: DesktopDataProtector = {
   protect: value => Promise.resolve(Buffer.from(`sealed:${value}`).toString('base64')),
@@ -29,6 +32,48 @@ const protector: DesktopDataProtector = {
 }
 
 describe('desktop runtime boundary', () => {
+  it('turns Squirrel lifecycle flags into early shortcut operations', () => {
+    const executable = 'C:\\Users\\teacher\\AppData\\Local\\FZFX_DSH\\app-0.1.2-alpha.2\\FZFX-DSH.exe'
+    expect(resolveSquirrelLifecycle(['FZFX-DSH.exe', '--squirrel-install'], executable, 'win32')).toEqual({
+      event: '--squirrel-install',
+      updateExecutable: 'C:\\Users\\teacher\\AppData\\Local\\FZFX_DSH\\Update.exe',
+      updateArguments: ['--createShortcut=FZFX-DSH.exe'],
+    })
+    expect(resolveSquirrelLifecycle(['FZFX-DSH.exe', '--squirrel-uninstall'], executable, 'win32')).toMatchObject({
+      event: '--squirrel-uninstall',
+      updateArguments: ['--removeShortcut=FZFX-DSH.exe'],
+    })
+    expect(resolveSquirrelLifecycle(['FZFX-DSH.exe', '--squirrel-obsolete'], executable, 'win32')).toEqual({
+      event: '--squirrel-obsolete',
+    })
+    expect(resolveSquirrelLifecycle(['FZFX-DSH.exe'], executable, 'win32')).toBeUndefined()
+    expect(resolveSquirrelLifecycle(['FZFX-DSH.exe', 'project', '--squirrel-install'], executable, 'win32'))
+      .toBeUndefined()
+    expect(resolveSquirrelLifecycle(['FZFX-DSH.exe', '--squirrel-install'], executable, 'darwin')).toBeUndefined()
+  })
+
+  it('targets the complete Windows runtime tree during shutdown', () => {
+    expect(windowsProcessTreeArguments(42, false)).toEqual(['/PID', '42', '/T'])
+    expect(windowsProcessTreeArguments(42, true)).toEqual(['/PID', '42', '/T', '/F'])
+    expect(() => windowsProcessTreeArguments(0, true)).toThrow(/positive safe integer/u)
+  })
+
+  it('writes bounded startup diagnostics without bearer, token, or API key values', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'dsh-desktop-diagnostics-'))
+    const logger = createDesktopStartupLogger(directory)
+    const unsafe = 'GET /?token=process-secret&client_secret=oidc-secret Bearer lease-secret {"apiKey":"model-secret"}'
+    logger.record('failure', { message: unsafe })
+
+    const text = await readFile(logger.path, 'utf8')
+    expect(text).toContain('failure')
+    expect(text).toContain('[redacted]')
+    expect(text).not.toContain('process-secret')
+    expect(text).not.toContain('lease-secret')
+    expect(text).not.toContain('model-secret')
+    expect(text).not.toContain('oidc-secret')
+    expect(redactDesktopDiagnostic(unsafe)).not.toMatch(/process-secret|oidc-secret|lease-secret|model-secret/u)
+  })
+
   it('accepts only the authenticated loopback startup URL', () => {
     expect(parseDshWebUrl('dsh web: http://127.0.0.1:49211/?token=abc_DEF-123')).toBe(
       'http://127.0.0.1:49211/?token=abc_DEF-123',
