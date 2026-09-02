@@ -88,7 +88,7 @@ describe('CI workflow', () => {
     expect(forgeIndex).toBeGreaterThan(squirrelSevenZipIndex)
     expect(forgeIndex).toBeGreaterThan(runtimeCopyIndex)
     expect(squirrelProbeIndex).toBeGreaterThan(forgeIndex)
-    expect(script).toContain('$squirrelProbe.WaitForExit(5_000)')
+    expect(script).toContain('$squirrelProbe.WaitForExit(5000)')
     expect(publishIndex).toBeGreaterThan(squirrelProbeIndex)
     expect(publishIndex).toBeGreaterThan(forgeIndex)
   })

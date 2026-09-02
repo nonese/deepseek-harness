@@ -186,7 +186,7 @@ if (-not (Test-Path $packagedExe)) { throw "packaged desktop executable is missi
 $squirrelProbe = $null
 try {
   $squirrelProbe = Start-Process -FilePath $packagedExe -ArgumentList '--squirrel-obsolete' -PassThru
-  if (-not $squirrelProbe.WaitForExit(5_000)) {
+  if (-not $squirrelProbe.WaitForExit(5000)) {
     throw 'packaged desktop did not exit promptly for --squirrel-obsolete'
   }
   if ($squirrelProbe.ExitCode -ne 0) {
