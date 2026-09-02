@@ -9,5 +9,12 @@ export default defineConfig({
   fixedExtension: false,
   dts: false,
   clean: false,
-  deps: { neverBundle: ['electron'] },
+  deps: {
+    alwaysBundle: (id) => (
+      id !== 'electron'
+      && !id.startsWith('node:')
+    ),
+    neverBundle: ['electron'],
+    onlyBundle: false,
+  },
 })

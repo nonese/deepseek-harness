@@ -30,4 +30,6 @@ if (squirrelEvent !== undefined) {
   process.exit(0)
 }
 
-await import('./lib/main.js')
+const { startDesktopApplication } = await import('./lib/main.js')
+if (process.argv.includes('--dsh-desktop-module-smoke')) process.exit(0)
+startDesktopApplication()

@@ -322,7 +322,8 @@ async function stopDsh(): Promise<void> {
   running.unref()
 }
 
-function startDesktopApplication(): void {
+/** Start the Electron-owned activation and local-runtime lifecycle. */
+export function startDesktopApplication(): void {
   app.disableHardwareAcceleration()
   diagnostics = createDesktopStartupLogger(join(app.getPath('userData'), 'logs'))
   record('application-start', { safeMode, hardwareAcceleration: false, version: app.getVersion() })
@@ -379,5 +380,3 @@ function startDesktopApplication(): void {
     })
   }
 }
-
-startDesktopApplication()

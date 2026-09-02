@@ -51,6 +51,16 @@ describe('desktop runtime boundary', () => {
     expect(result.stderr).toBe('')
   })
 
+  it('emits a self-contained Electron main bundle', async () => {
+    const builtMain = await readFile(new URL('../lib/main.js', import.meta.url), 'utf8')
+    const bareImports = [...builtMain.matchAll(/^import\s+.+\s+from\s+['"]([^'".\/][^'"]*)['"];?$/gmu)]
+      .map(match => match[1])
+      .filter(specifier => !specifier.startsWith('node:'))
+
+    expect(bareImports).toEqual(['electron'])
+    expect(builtMain).not.toContain('@deepseek-ai/cordis')
+  })
+
   it('targets the complete Windows runtime tree during shutdown', () => {
     expect(windowsProcessTreeArguments(42, false)).toEqual(['/PID', '42', '/T'])
     expect(windowsProcessTreeArguments(42, true)).toEqual(['/PID', '42', '/T', '/F'])

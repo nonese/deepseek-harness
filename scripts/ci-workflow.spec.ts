@@ -74,6 +74,7 @@ describe('CI workflow', () => {
     const squirrelSevenZipIndex = script.indexOf("Join-Path $squirrelVendor '7z.exe'")
     const forgeIndex = script.indexOf('node_modules/@electron-forge/cli/dist/electron-forge.js')
     const squirrelProbeIndex = script.indexOf("-ArgumentList '--squirrel-obsolete'")
+    const moduleProbeIndex = script.indexOf("-ArgumentList '--dsh-desktop-module-smoke'")
     const publishIndex = script.indexOf('$desktopOut = Join-Path $desktopDir \'out\'')
 
     expect(hoistedDeploys).toHaveLength(2)
@@ -91,7 +92,9 @@ describe('CI workflow', () => {
     expect(script).toContain('$packagedExecutables.Count -ne 1')
     expect(squirrelProbeIndex).toBeGreaterThan(forgeIndex)
     expect(script).toContain('$squirrelProbe.WaitForExit(15000)')
-    expect(publishIndex).toBeGreaterThan(squirrelProbeIndex)
+    expect(moduleProbeIndex).toBeGreaterThan(squirrelProbeIndex)
+    expect(script).toContain('$moduleProbe.WaitForExit(15000)')
+    expect(publishIndex).toBeGreaterThan(moduleProbeIndex)
     expect(publishIndex).toBeGreaterThan(forgeIndex)
   })
 

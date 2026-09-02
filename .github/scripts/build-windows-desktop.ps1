@@ -204,6 +204,22 @@ try {
   }
 }
 
+$moduleProbe = $null
+try {
+  $moduleProbe = Start-Process -FilePath $packagedExe -ArgumentList '--dsh-desktop-module-smoke' -PassThru
+  if (-not $moduleProbe.WaitForExit(15000)) {
+    throw 'packaged desktop did not load its Electron main module promptly'
+  }
+  if ($moduleProbe.ExitCode -ne 0) {
+    throw "packaged desktop main-module probe exited with $($moduleProbe.ExitCode)"
+  }
+} finally {
+  if ($null -ne $moduleProbe -and -not $moduleProbe.HasExited) {
+    Stop-Process -Id $moduleProbe.Id -Force
+    $moduleProbe.WaitForExit()
+  }
+}
+
 $stageSetup = Join-Path $packageStage 'out/make/squirrel.windows/x64/FZFX-DSH-Setup.exe'
 if (-not (Test-Path $stageSetup)) { throw "installer is missing at $stageSetup" }
 $digest = (Get-FileHash -LiteralPath $stageSetup -Algorithm SHA256).Hash.ToLowerInvariant()
