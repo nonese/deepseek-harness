@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto'
+import { spawnSync } from 'node:child_process'
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { parseDocument } from 'yaml'
 import {
@@ -24,7 +26,6 @@ import {
 } from '../src/runtime.ts'
 import { createDesktopStartupLogger, redactDesktopDiagnostic } from '../src/diagnostics.ts'
 import { windowsProcessTreeArguments } from '../src/process-tree.ts'
-import { resolveSquirrelLifecycle } from '../src/squirrel.ts'
 
 const protector: DesktopDataProtector = {
   protect: value => Promise.resolve(Buffer.from(`sealed:${value}`).toString('base64')),
@@ -32,24 +33,22 @@ const protector: DesktopDataProtector = {
 }
 
 describe('desktop runtime boundary', () => {
-  it('turns Squirrel lifecycle flags into early shortcut operations', () => {
-    const executable = 'C:\\Users\\teacher\\AppData\\Local\\FZFX_DSH\\app-0.1.2-alpha.2\\FZFX-DSH.exe'
-    expect(resolveSquirrelLifecycle(['FZFX-DSH.exe', '--squirrel-install'], executable, 'win32')).toEqual({
-      event: '--squirrel-install',
-      updateExecutable: 'C:\\Users\\teacher\\AppData\\Local\\FZFX_DSH\\Update.exe',
-      updateArguments: ['--createShortcut=FZFX-DSH.exe'],
-    })
-    expect(resolveSquirrelLifecycle(['FZFX-DSH.exe', '--squirrel-uninstall'], executable, 'win32')).toMatchObject({
-      event: '--squirrel-uninstall',
-      updateArguments: ['--removeShortcut=FZFX-DSH.exe'],
-    })
-    expect(resolveSquirrelLifecycle(['FZFX-DSH.exe', '--squirrel-obsolete'], executable, 'win32')).toEqual({
-      event: '--squirrel-obsolete',
-    })
-    expect(resolveSquirrelLifecycle(['FZFX-DSH.exe'], executable, 'win32')).toBeUndefined()
-    expect(resolveSquirrelLifecycle(['FZFX-DSH.exe', 'app.asar', '--squirrel-install'], executable, 'win32'))
-      .toMatchObject({ event: '--squirrel-install' })
-    expect(resolveSquirrelLifecycle(['FZFX-DSH.exe', '--squirrel-install'], executable, 'darwin')).toBeUndefined()
+  it('exits the Squirrel obsolete bootstrap before Electron loads', async () => {
+    const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')) as {
+      main?: unknown
+      files?: unknown
+    }
+    expect(packageJson.main).toBe('bootstrap.mjs')
+    expect(packageJson.files).toContain('bootstrap.mjs')
+
+    const result = spawnSync(process.execPath, [
+      fileURLToPath(new URL('../bootstrap.mjs', import.meta.url)),
+      'app.asar',
+      '--squirrel-obsolete',
+    ], { encoding: 'utf8', timeout: 5_000 })
+    expect(result.error).toBeUndefined()
+    expect(result.status).toBe(0)
+    expect(result.stderr).toBe('')
   })
 
   it('targets the complete Windows runtime tree during shutdown', () => {

@@ -4,7 +4,7 @@
   "description": "Windows desktop distribution of the DeepSeek Harness",
   "version": "0.1.2-alpha.2",
   "type": "module",
-  "main": "lib/main.js",
+  "main": "bootstrap.mjs",
   "author": "奉中附小",
   "license": "MIT",
   "repository": {
@@ -16,6 +16,7 @@
     "access": "public"
   },
   "files": [
+    "bootstrap.mjs",
     "lib/*.js",
     "assets",
     "desktop.config.example.json",

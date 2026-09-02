@@ -24,7 +24,6 @@ import {
 } from './runtime.ts'
 import { createDesktopStartupLogger, type DesktopStartupLogger } from './diagnostics.ts'
 import { windowsProcessTreeArguments } from './process-tree.ts'
-import { resolveSquirrelLifecycle, type SquirrelLifecycleAction } from './squirrel.ts'
 
 const RENEW_BEFORE_MS = 7 * 24 * 60 * 60 * 1000
 const POLL_INTERVAL_MS = 2_000
@@ -283,18 +282,6 @@ async function createWindow(): Promise<void> {
   record('activation-window-ready')
 }
 
-function handleSquirrelLifecycle(action: SquirrelLifecycleAction): void {
-  if (action.updateExecutable === undefined || action.updateArguments === undefined) return
-  const result = spawnSync(action.updateExecutable, action.updateArguments, {
-    timeout: 8_000,
-    windowsHide: true,
-  })
-  if (result.error !== undefined) throw result.error
-  if (result.status !== 0) {
-    throw new Error(`Squirrel shortcut operation exited with ${String(result.status)}`)
-  }
-}
-
 function stopWindowsProcessTree(pid: number, force: boolean): void {
   const result = spawnSync('taskkill', windowsProcessTreeArguments(pid, force), {
     stdio: 'ignore',
@@ -393,14 +380,4 @@ function startDesktopApplication(): void {
   }
 }
 
-const squirrelLifecycle = resolveSquirrelLifecycle(process.argv, process.execPath)
-if (squirrelLifecycle === undefined) startDesktopApplication()
-else {
-  try {
-    handleSquirrelLifecycle(squirrelLifecycle)
-    process.exit(0)
-  } catch (error) {
-    console.error(error)
-    process.exit(1)
-  }
-}
+startDesktopApplication()
