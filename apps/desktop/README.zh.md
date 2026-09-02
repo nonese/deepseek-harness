@@ -6,7 +6,7 @@ Electron 外壳打包完整的 Windows x64 DSH 运行时，并只通过 `dsh --p
 
 Squirrel 的安装、更新、卸载和旧进程事件会在普通 Electron 启动前处理完成。外壳会禁用硬件加速，只显示激活状态而不自动启动 DSH，并且只有用户选择“启动本地 DSH”后才拉起本地运行时。通过 `FZFX-DSH.exe --safe-mode` 启动时，外壳不会连接服务器，也不会启动运行时。经过凭据脱敏且大小受限的启动诊断记录在 Electron 用户数据目录下的 `logs/desktop-startup.jsonl`。
 
-`windows-desktop.yml` 构建未签名的试运行安装包。仓库 Actions 变量必须提供 `DSH_DESKTOP_SERVER_SIGNING_PUBLIC_JWK`；`DSH_DESKTOP_SERVER_ORIGIN` 默认是 `http://10.155.44.246:3081`。封装前，Windows runner 会启动暂存运行时，并请求其通过进程 token 认证的页面。它在短暂存路径中为运行时和 Electron Forge 生成 hoisted 实体依赖树，不直接打包 pnpm workspace 或虚拟存储链接，同时让 Squirrel 的 NuGet 输入保持在 Windows 路径限制内。因为这些隔离依赖树会跳过依赖安装脚本，打包脚本会在调用 Squirrel 前显式选择 electron-winstaller 的 x64 版 7-Zip 可执行文件和动态库。封装后，runner 会使用 Squirrel 的旧进程事件启动已打包的可执行文件，并要求它在 5 秒内成功退出。产物包含 `FZFX-DSH-Setup.exe`、它的 SHA-256 文件和构建清单。在完成 Windows 实机验收前，不能把该试运行版本描述为生产就绪。
+`windows-desktop.yml` 构建未签名的试运行安装包。仓库 Actions 变量必须提供 `DSH_DESKTOP_SERVER_SIGNING_PUBLIC_JWK`；`DSH_DESKTOP_SERVER_ORIGIN` 默认是 `http://10.155.44.246:3081`。封装前，Windows runner 会启动暂存运行时，并请求其通过进程 token 认证的页面。它在短暂存路径中为运行时和 Electron Forge 生成 hoisted 实体依赖树，不直接打包 pnpm workspace 或虚拟存储链接，同时让 Squirrel 的 NuGet 输入保持在 Windows 路径限制内。因为这些隔离依赖树会跳过依赖安装脚本，打包脚本会在调用 Squirrel 前显式选择 electron-winstaller 的 x64 版 7-Zip 可执行文件和动态库。封装后，runner 会使用 Squirrel 的旧进程事件启动已打包的可执行文件，并要求它在 15 秒内成功退出。产物包含 `FZFX-DSH-Setup.exe`、它的 SHA-256 文件和构建清单。在完成 Windows 实机验收前，不能把该试运行版本描述为生产就绪。
 
 ## 本地构建检查
 

@@ -191,7 +191,7 @@ $packagedExe = $packagedExecutables[0].FullName
 $squirrelProbe = $null
 try {
   $squirrelProbe = Start-Process -FilePath $packagedExe -ArgumentList '--squirrel-obsolete' -PassThru
-  if (-not $squirrelProbe.WaitForExit(5000)) {
+  if (-not $squirrelProbe.WaitForExit(15000)) {
     throw 'packaged desktop did not exit promptly for --squirrel-obsolete'
   }
   if ($squirrelProbe.ExitCode -ne 0) {

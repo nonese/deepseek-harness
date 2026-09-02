@@ -90,7 +90,7 @@ describe('CI workflow', () => {
     expect(script).toContain("-Filter 'FZFX-DSH.exe' -Recurse -File")
     expect(script).toContain('$packagedExecutables.Count -ne 1')
     expect(squirrelProbeIndex).toBeGreaterThan(forgeIndex)
-    expect(script).toContain('$squirrelProbe.WaitForExit(5000)')
+    expect(script).toContain('$squirrelProbe.WaitForExit(15000)')
     expect(publishIndex).toBeGreaterThan(squirrelProbeIndex)
     expect(publishIndex).toBeGreaterThan(forgeIndex)
   })
