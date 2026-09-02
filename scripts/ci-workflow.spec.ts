@@ -66,6 +66,10 @@ describe('CI workflow', () => {
       .map(step => step.run)
       .join('\n')
     expect(commands).not.toContain('pnpm config set node-linker')
+    const desktopBuildIndex = commands.indexOf('pnpm run build:desktop')
+    const constructionTestIndex = commands.indexOf('pnpm exec vitest run')
+    expect(desktopBuildIndex).toBeGreaterThan(-1)
+    expect(constructionTestIndex).toBeGreaterThan(desktopBuildIndex)
 
     const script = readFileSync(resolve(root, '.github/scripts/build-windows-desktop.ps1'), 'utf8')
     const hoistedDeploys = script.match(/--config\.node-linker=hoisted/g) ?? []

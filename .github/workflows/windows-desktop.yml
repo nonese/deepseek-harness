@@ -33,8 +33,10 @@ jobs:
       - name: Install reviewed dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build DSH packages and Web assets
-        run: pnpm run build
+      - name: Build DSH packages, Web assets, and desktop launcher
+        run: |
+          pnpm run build
+          pnpm run build:desktop
 
       - name: Run desktop construction tests
         run: >-
