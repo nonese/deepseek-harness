@@ -23,13 +23,12 @@ export function resolveSquirrelLifecycle(
   platform: NodeJS.Platform = process.platform,
 ): SquirrelLifecycleAction | undefined {
   if (platform !== 'win32') return undefined
-  const argument = argv[1]
-  const event: SquirrelLifecycleAction['event'] | undefined = (
+  const event = argv.slice(1).find((argument): argument is SquirrelLifecycleAction['event'] => (
     argument === '--squirrel-install'
     || argument === '--squirrel-updated'
     || argument === '--squirrel-uninstall'
     || argument === '--squirrel-obsolete'
-  ) ? argument : undefined
+  ))
   if (event === undefined || event === '--squirrel-obsolete') return event === undefined ? undefined : { event }
   const shortcutOperation = event === '--squirrel-uninstall' ? '--removeShortcut' : '--createShortcut'
   return {

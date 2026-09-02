@@ -47,8 +47,8 @@ describe('desktop runtime boundary', () => {
       event: '--squirrel-obsolete',
     })
     expect(resolveSquirrelLifecycle(['FZFX-DSH.exe'], executable, 'win32')).toBeUndefined()
-    expect(resolveSquirrelLifecycle(['FZFX-DSH.exe', 'project', '--squirrel-install'], executable, 'win32'))
-      .toBeUndefined()
+    expect(resolveSquirrelLifecycle(['FZFX-DSH.exe', 'app.asar', '--squirrel-install'], executable, 'win32'))
+      .toMatchObject({ event: '--squirrel-install' })
     expect(resolveSquirrelLifecycle(['FZFX-DSH.exe', '--squirrel-install'], executable, 'darwin')).toBeUndefined()
   })
 

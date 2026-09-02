@@ -398,9 +398,9 @@ if (squirrelLifecycle === undefined) startDesktopApplication()
 else {
   try {
     handleSquirrelLifecycle(squirrelLifecycle)
-    app.exit(0)
+    process.exit(0)
   } catch (error) {
     console.error(error)
-    app.exit(1)
+    process.exit(1)
   }
 }
