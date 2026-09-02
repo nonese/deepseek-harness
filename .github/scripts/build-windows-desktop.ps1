@@ -181,8 +181,13 @@ try {
   else { $env:PNPM_CONFIG_NODE_LINKER = $previousPnpmNodeLinker }
 }
 
-$packagedExe = Join-Path $packageStage 'out/FZFX-DSH-win32-x64/FZFX-DSH.exe'
-if (-not (Test-Path $packagedExe)) { throw "packaged desktop executable is missing at $packagedExe" }
+$packagedExecutables = @(
+  Get-ChildItem -Path (Join-Path $packageStage 'out') -Filter 'FZFX-DSH.exe' -Recurse -File
+)
+if ($packagedExecutables.Count -ne 1) {
+  throw "expected one packaged desktop executable, found $($packagedExecutables.Count)"
+}
+$packagedExe = $packagedExecutables[0].FullName
 $squirrelProbe = $null
 try {
   $squirrelProbe = Start-Process -FilePath $packagedExe -ArgumentList '--squirrel-obsolete' -PassThru
