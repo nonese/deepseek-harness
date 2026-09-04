@@ -10,6 +10,8 @@ An ESM bootstrap handles Squirrel install, update, uninstall, and obsolete-proce
 
 ## Local construction checks
 
+The Windows installer version comes from this directory's [package.json](package.json), independently of the bundled DSH runtime version. Increment it before distributing a changed installer so Squirrel can distinguish the installed package from its replacement.
+
 ```sh
 pnpm run build:desktop
 pnpm exec vitest run apps/desktop/tests/runtime.spec.ts

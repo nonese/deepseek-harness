@@ -10,6 +10,8 @@ Electron 外壳打包完整的 Windows x64 DSH 运行时，并只通过 `dsh --p
 
 ## 本地构建检查
 
+Windows 安装器版本取自本目录的 [package.json](package.json)，独立于内置 DSH 运行时版本。分发内容有变化的安装包前必须递增该版本，让 Squirrel 能区分已安装的包和替换包。
+
 ```sh
 pnpm run build:desktop
 pnpm exec vitest run apps/desktop/tests/runtime.spec.ts
